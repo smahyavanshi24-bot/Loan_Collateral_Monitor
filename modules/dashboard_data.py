@@ -1,97 +1,101 @@
 import sqlite3
 import pandas as pd
+import os
 
 
 DATABASE_PATH = "database/collateral.db"
 
 
-
 def get_collateral_history():
 
-    conn = sqlite3.connect(
-        DATABASE_PATH
-    )
+    # Check if database exists
+    if not os.path.exists(DATABASE_PATH):
+        return pd.DataFrame()
 
 
-    query = """
-    SELECT
+    try:
 
-        date,
-        borrower,
-        loan_amount,
-        security,
-        shares,
-        price,
-        collateral_value,
-        cover,
-        required_cover,
-        status
-
-    FROM collateral_history
-
-    ORDER BY date
-
-    """
+        conn = sqlite3.connect(
+            DATABASE_PATH
+        )
 
 
-    df = pd.read_sql_query(
-        query,
-        conn
-    )
+        query = """
+        SELECT *
+        FROM collateral
+        ORDER BY id DESC
+        """
 
 
-    conn.close()
+        df = pd.read_sql_query(
+            query,
+            conn
+        )
 
 
-    return df
+        conn.close()
+
+
+        return df
+
+
+    except Exception as e:
+
+        print(
+            "Database Error:",
+            e
+        )
+
+        return pd.DataFrame()
 
 
 
-
-def get_borrower_summary():
+def get_latest_records():
 
     df = get_collateral_history()
 
 
-    summary = (
-        df.groupby(
-            [
-                "borrower",
-                "loan_amount"
-            ]
-        )
-        .agg(
-            {
-                "collateral_value":"sum"
-            }
-        )
-        .reset_index()
-    )
+    if df.empty:
+
+        return df
 
 
-    summary["total_cover"] = (
-        summary["collateral_value"]
-        /
-        summary["loan_amount"]
-    )
-
-
-    return summary
+    return df.head(10)
 
 
 
-
-def get_risk_alerts():
+def get_summary():
 
     df = get_collateral_history()
 
 
-    alerts = df[
-        df["status"]
-        .str.contains(
-            "Shortfall"
-        )
-    ]
+    if df.empty:
+
+        return {
+
+            "total_records": 0,
+
+            "total_collateral": 0,
+
+            "average_cover": 0
+
+        }
 
 
-    return alerts
+    return {
+
+        "total_records":
+            len(df),
+
+
+        "total_collateral":
+            df["collateral_value"].sum(),
+
+
+        "average_cover":
+            round(
+                df["cover"].mean(),
+                2
+            )
+
+    }
