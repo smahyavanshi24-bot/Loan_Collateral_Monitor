@@ -1,0 +1,23 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Secrets
+config.py
+
+# Database
+database/
+*.db
+
+# Reports
+reports/
+
+# Local data
+data/
+
+# Testing files
+test_*.py
+view_database.py
+
+# Environment
+.env
