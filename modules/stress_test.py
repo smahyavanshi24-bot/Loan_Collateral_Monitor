@@ -184,11 +184,11 @@ def run_stress_test(df, scenarios=None):
             # RISK STATUS
             # ------------------------------------------------
 
-            if stressed_cover >= required_cover:
+            if stressed_cover >= 2.10:
 
                 status = "🟢 SAFE"
 
-            elif stressed_cover >= 1.50:
+            elif stressed_cover >= 2.00:
 
                 status = "🟡 WATCH"
 
