@@ -11,6 +11,19 @@ from modules.stress_test import run_stress_test
 from modules.formatting import format_crore, format_cover
 from modules.collateral_rebalancing import calculate_collateral_rebalancing
 from modules.collateral_release import calculate_release_request
+from modules.share_movements import (
+    initialize_share_movements,
+    record_share_movement,
+    get_share_movements,
+    get_current_shares,
+)
+
+from modules.share_movements import (
+    initialize_share_movements,
+    record_share_movement,
+    get_share_movements,
+    get_current_shares,
+)
 
 # ============================================================
 # PAGE CONFIGURATION
