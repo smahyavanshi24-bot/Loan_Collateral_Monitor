@@ -10,6 +10,7 @@ from modules.borrower_summary import borrower_summary
 from modules.stress_test import run_stress_test
 from modules.margin_call import calculate_margin_call
 from modules.risk_alert_engine import generate_risk_alerts
+from modules.formatting import format_crore, format_cover
 
 
 # ============================================================
@@ -194,10 +195,37 @@ available_borrower_columns = [
 ]
 
 
+borrower_view = borrower_risk[
+    available_borrower_columns
+].copy()
+
+if "loan_amount" in borrower_view.columns:
+    borrower_view["loan_amount"] = borrower_view[
+        "loan_amount"
+    ].apply(format_crore)
+
+if "collateral_value" in borrower_view.columns:
+    borrower_view["collateral_value"] = borrower_view[
+        "collateral_value"
+    ].apply(format_crore)
+
+if "total_cover" in borrower_view.columns:
+    borrower_view["total_cover"] = borrower_view[
+        "total_cover"
+    ].apply(format_cover)
+
+if "required_cover" in borrower_view.columns:
+    borrower_view["required_cover"] = borrower_view[
+        "required_cover"
+    ].apply(format_cover)
+
+if "buffer" in borrower_view.columns:
+    borrower_view["buffer"] = borrower_view[
+        "buffer"
+    ].apply(format_cover)
+
 st.dataframe(
-    borrower_risk[
-        available_borrower_columns
-    ],
+    borrower_view,
     width="stretch",
     hide_index=True
 )
@@ -251,6 +279,20 @@ if "date" in security_view.columns:
         .dt.strftime("%d-%b-%Y")
     )
 
+if "cover" in security_view.columns:
+    security_view["cover"] = security_view[
+        "cover"
+    ].apply(format_cover)
+
+if "required_cover" in security_view.columns:
+    security_view["required_cover"] = security_view[
+        "required_cover"
+    ].apply(format_cover)
+
+if "buffer" in security_view.columns:
+    security_view["buffer"] = security_view[
+        "buffer"
+    ].apply(format_cover)
 
 st.dataframe(
     security_view,
@@ -520,17 +562,62 @@ except Exception as e:
 st.subheader("📉 Collateral Stress Testing")
 
 
+# ============================================================
+# 5. COLLATERAL STRESS TESTING
+# ============================================================
+
+st.subheader("📉 Collateral Stress Testing")
+
 try:
 
     stress_df = run_stress_test(
         df.copy()
     )
 
-
     if stress_df is not None and not stress_df.empty:
 
+        stress_view = stress_df.copy()
+
+        # ----------------------------------------------------
+        # Convert financial amounts to ₹ Crore
+        # ----------------------------------------------------
+
+        if "Current Collateral" in stress_view.columns:
+            stress_view["Current Collateral"] = (
+                stress_view["Current Collateral"]
+                .apply(format_crore)
+            )
+
+        if "Stressed Collateral" in stress_view.columns:
+            stress_view["Stressed Collateral"] = (
+                stress_view["Stressed Collateral"]
+                .apply(format_crore)
+            )
+
+        if "Loan Amount" in stress_view.columns:
+            stress_view["Loan Amount"] = (
+                stress_view["Loan Amount"]
+                .apply(format_crore)
+            )
+
+        # ----------------------------------------------------
+        # Format cover ratios
+        # ----------------------------------------------------
+
+        if "Cover" in stress_view.columns:
+            stress_view["Cover"] = (
+                stress_view["Cover"]
+                .apply(format_cover)
+            )
+
+        if "Required Cover" in stress_view.columns:
+            stress_view["Required Cover"] = (
+                stress_view["Required Cover"]
+                .apply(format_cover)
+            )
+
         st.dataframe(
-            stress_df,
+            stress_view,
             width="stretch",
             hide_index=True
         )
@@ -541,7 +628,6 @@ try:
             "No stress-test data available."
         )
 
-
 except Exception as e:
 
     st.warning(
@@ -549,6 +635,10 @@ except Exception as e:
         + str(e)
     )
 
+
+# ============================================================
+# 6. MARGIN CALL MONITORING
+# ============================================================
 
 # ============================================================
 # 6. MARGIN CALL MONITORING
