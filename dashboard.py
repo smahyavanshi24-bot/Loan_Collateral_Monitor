@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 import altair as alt
 
@@ -24,7 +24,7 @@ from modules.share_movements import (
 
 st.set_page_config(
     page_title="Loan Collateral Risk Dashboard",
-    page_icon="📊",
+    page_icon="ðŸ“Š",
     layout="wide",
 )
 
@@ -42,7 +42,7 @@ initialize_share_movements()
 # HEADER
 # ============================================================
 
-st.title("📊 Loan Collateral Risk Monitoring System")
+st.title("ðŸ“Š Loan Collateral Risk Monitoring System")
 
 st.caption(
     "Credit Risk Dashboard | Collateral & Security Cover Monitoring"
@@ -195,7 +195,7 @@ if "date" in market_df.columns:
 # 1. BORROWER RISK SUMMARY
 # ============================================================
 
-st.subheader("👥 Borrower Risk Summary")
+st.subheader("ðŸ‘¥ Borrower Risk Summary")
 
 
 borrower_risk = borrower_summary(
@@ -279,7 +279,7 @@ st.dataframe(
 # LATEST TRADING DATE ONLY
 # ============================================================
 
-st.subheader("🚦 Security Risk Monitoring")
+st.subheader("ðŸš¦ Security Risk Monitoring")
 
 
 security_columns = [
@@ -364,12 +364,12 @@ st.caption(
 # 3. IMMEDIATE ATTENTION REQUIRED
 # ============================================================
 
-st.subheader("🚨 Immediate Attention Required")
+st.subheader("ðŸš¨ Immediate Attention Required")
 
 
 critical = risk_df[
     risk_df["risk_status"].astype(str)
-    == "🔴 Action Required"
+    == "ðŸ”´ Action Required"
 ].copy()
 
 
@@ -462,7 +462,7 @@ else:
 # LATEST TRADING DATE ONLY
 # ============================================================
 
-st.subheader("📉 Market Movement Monitoring")
+st.subheader("ðŸ“‰ Market Movement Monitoring")
 
 
 market_columns = [
@@ -516,7 +516,7 @@ st.dataframe(
 # 5. COLLATERAL STRESS TESTING
 # ============================================================
 
-st.subheader("📉 Collateral Stress Testing")
+st.subheader("ðŸ“‰ Collateral Stress Testing")
 
 
 try:
@@ -614,7 +614,7 @@ except Exception as e:
 
 st.divider()
 
-st.subheader("📊 Share Movement Tracking")
+st.subheader("ðŸ“Š Share Movement Tracking")
 
 
 st.caption(
@@ -823,7 +823,7 @@ if not movement_df.empty:
 
     movement_view["Movement Date"] = (
         movement_view["Movement Date"]
-        .fillna("—")
+        .fillna("â€”")
     )
 
 
@@ -875,13 +875,13 @@ if not movement_df.empty:
 
                 if numeric_value < 0:
 
-                    return f"−{abs(numeric_value):,}"
+                    return f"âˆ’{abs(numeric_value):,}"
 
-                return "—"
+                return "â€”"
 
             except Exception:
 
-                return "—"
+                return "â€”"
 
 
         movement_view["Movement Shares"] = (
@@ -921,7 +921,7 @@ else:
 # ADD FUTURE SHARE MOVEMENT
 # ============================================================
 
-st.subheader("➕ Record Future Share Movement")
+st.subheader("âž• Record Future Share Movement")
 
 
 st.caption(
@@ -1082,7 +1082,7 @@ if borrowers:
                 - int(movement_quantity)
             )
 
-            movement_symbol = "−"
+            movement_symbol = "âˆ’"
 
 
         if resulting_shares < 0:
@@ -1120,7 +1120,7 @@ if borrowers:
             # ------------------------------------------------
 
             if st.button(
-                "💾 Save Share Movement",
+                "ðŸ’¾ Save Share Movement",
                 type="primary",
                 key="save_share_movement",
             ):
@@ -1176,334 +1176,7 @@ if borrowers:
 
 
 # ============================================================
-# 7. CURRENT SHARE POSITION
-#
-# This section shows the revised current shares separately.
-#
-# It does NOT modify historical records.
-# ============================================================
-
-st.divider()
-
-st.subheader("📌 Current Share Position")
-
-
-current_position_rows = []
-
-
-for borrower in borrowers:
-
-    borrower_securities = sorted(
-        df.loc[
-            df["borrower"] == borrower,
-            "security",
-        ]
-        .dropna()
-        .astype(str)
-        .unique()
-        .tolist()
-    )
-
-
-    for security in borrower_securities:
-
-        try:
-
-            current_shares = get_current_shares(
-                borrower,
-                security,
-            )
-
-            current_shares = int(
-                current_shares
-            )
-
-        except Exception:
-
-            security_history = df[
-                (df["borrower"] == borrower)
-                &
-                (df["security"] == security)
-            ].copy()
-
-
-            if security_history.empty:
-
-                continue
-
-
-            security_history = (
-                security_history
-                .sort_values("date")
-            )
-
-
-            current_shares = int(
-                security_history.iloc[-1]["shares"]
-            )
-
-
-        current_position_rows.append(
-            {
-                "Borrower": borrower,
-                "Security": security,
-                "Current No. of Shares": current_shares,
-            }
-        )
-
-
-current_position_df = pd.DataFrame(
-    current_position_rows
-)
-
-
-if not current_position_df.empty:
-
-    current_position_df[
-        "Current No. of Shares"
-    ] = (
-        current_position_df[
-            "Current No. of Shares"
-        ]
-        .astype(int)
-        .map(lambda x: f"{x:,}")
-    )
-
-
-    st.dataframe(
-        current_position_df,
-        width="stretch",
-        hide_index=True,
-    )
-
-
-# ============================================================
-# 8. LATEST COVER BASED ON CURRENT SHARE POSITION
-#
-# Historical data is retained.
-# Only the CURRENT share quantity is adjusted.
-# ============================================================
-
-st.subheader(
-    "🛡️ Current Collateral Cover After Share Movements"
-)
-
-
-latest_position_rows = []
-
-
-for borrower in borrowers:
-
-    borrower_history = df[
-        df["borrower"] == borrower
-    ].copy()
-
-
-    if borrower_history.empty:
-
-        continue
-
-
-    borrower_securities = sorted(
-        borrower_history["security"]
-        .dropna()
-        .astype(str)
-        .unique()
-        .tolist()
-    )
-
-
-    loan_amount = pd.to_numeric(
-        borrower_history["loan_amount"],
-        errors="coerce",
-    ).dropna()
-
-
-    if loan_amount.empty:
-
-        continue
-
-
-    loan_amount = float(
-        loan_amount.iloc[-1]
-    )
-
-
-    required_cover_series = pd.to_numeric(
-        borrower_history["required_cover"],
-        errors="coerce",
-    ).dropna()
-
-
-    if required_cover_series.empty:
-
-        required_cover = 2.00
-
-    else:
-
-        required_cover = float(
-            required_cover_series.iloc[-1]
-        )
-
-
-    borrower_current_collateral = 0.0
-
-
-    for security in borrower_securities:
-
-        security_history = borrower_history[
-            borrower_history["security"] == security
-        ].copy()
-
-
-        if security_history.empty:
-
-            continue
-
-
-        security_history = (
-            security_history
-            .sort_values("date")
-        )
-
-
-        latest_security = (
-            security_history.iloc[-1]
-        )
-
-
-        price = float(
-            latest_security["price"]
-        )
-
-
-        try:
-
-            current_shares = int(
-                get_current_shares(
-                    borrower,
-                    security,
-                )
-            )
-
-        except Exception:
-
-            current_shares = int(
-                latest_security["shares"]
-            )
-
-
-        current_collateral = (
-            price
-            * current_shares
-        )
-
-
-        borrower_current_collateral += (
-            current_collateral
-        )
-
-
-        latest_position_rows.append(
-            {
-                "Borrower": borrower,
-                "Security": security,
-                "Current Shares": current_shares,
-                "Price": price,
-                "Current Collateral": current_collateral,
-            }
-        )
-
-
-    if loan_amount > 0:
-
-        borrower_current_cover = (
-            borrower_current_collateral
-            / loan_amount
-        )
-
-    else:
-
-        borrower_current_cover = 0.0
-
-
-    if borrower_current_cover >= required_cover:
-
-        cover_status = "🟢 Cover Met"
-
-    else:
-
-        cover_status = "🔴 Shortfall"
-
-
-    shortfall_collateral = max(
-        0,
-        (
-            loan_amount
-            * required_cover
-        )
-        - borrower_current_collateral
-    )
-
-
-    st.write(
-        f"**{borrower}**"
-    )
-
-
-    cover_columns = st.columns(5)
-
-
-    cover_columns[0].metric(
-        "Loan Amount",
-        format_crore(loan_amount),
-    )
-
-
-    cover_columns[1].metric(
-        "Current Collateral",
-        format_crore(
-            borrower_current_collateral
-        ),
-    )
-
-
-    cover_columns[2].metric(
-        "Current Cover",
-        f"{borrower_current_cover:.2f}x",
-    )
-
-
-    cover_columns[3].metric(
-        "Required Cover",
-        f"{required_cover:.2f}x",
-    )
-
-
-    cover_columns[4].metric(
-        "Status",
-        cover_status,
-    )
-
-
-    if borrower_current_cover < required_cover:
-
-        st.warning(
-            "Additional collateral required: "
-            + format_crore(
-                shortfall_collateral
-            )
-        )
-
-    else:
-
-        st.success(
-            "Required borrower-level collateral cover is met."
-        )
-
-
-# ============================================================
-# 9. COMPLETE HISTORICAL DATA
+# 7. COMPLETE HISTORICAL DATA
 #
 # IMPORTANT:
 # This table is the ORIGINAL historical database.
@@ -1512,7 +1185,7 @@ for borrower in borrowers:
 
 st.divider()
 
-st.subheader("📚 Complete Historical Data")
+st.subheader("ðŸ“š Complete Historical Data")
 
 
 historical_view = df.copy()
@@ -1572,9 +1245,9 @@ if "price" in historical_view.columns:
         )
         .map(
             lambda x:
-            f"₹{x:,.2f}"
+            f"â‚¹{x:,.2f}"
             if pd.notna(x)
-            else "—"
+            else "â€”"
         )
     )
 
@@ -1632,10 +1305,10 @@ st.dataframe(
 
 
 # ============================================================
-# 10. HISTORICAL BORROWER COVER MOVEMENT
+# 8. HISTORICAL BORROWER COVER MOVEMENT
 # ============================================================
 
-st.subheader("📈 Historical Borrower Cover Movement")
+st.subheader("ðŸ“ˆ Historical Borrower Cover Movement")
 
 
 cover_history = df.copy()
@@ -1869,3 +1542,4 @@ st.caption(
     "Historical collateral records are retained by trading date. "
     "Share additions and releases are tracked separately."
 )
+
