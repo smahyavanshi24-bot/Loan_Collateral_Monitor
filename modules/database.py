@@ -1,287 +1,356 @@
+# -*- coding: utf-8 -*-
+
 import sqlite3
 import os
 
-DATABASE_PATH = "database/collateral.db"
+
+# ============================================================
+# DATABASE FILE
+# ============================================================
+
+DATABASE_FILE = "database/collateral.db"
 
 
-# -------------------------------------------------
-# Initialize Database
-# -------------------------------------------------
+# ============================================================
+# GET DATABASE CONNECTION
+# ============================================================
 
-def initialize_database():
+def get_connection():
 
     os.makedirs(
         "database",
         exist_ok=True
     )
 
-    conn = sqlite3.connect(DATABASE_PATH)
-
-    cursor = conn.cursor()
-
-    # -----------------------------
-    # Collateral History
-    # -----------------------------
-
-    cursor.execute("""
-
-    CREATE TABLE IF NOT EXISTS collateral_history
-
-    (
-
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-        date TEXT,
-
-        borrower TEXT,
-
-        security TEXT,
-
-        price REAL,
-
-        shares INTEGER,
-
-        loan_amount REAL,
-
-        collateral_value REAL,
-
-        cover REAL,
-
-        required_cover REAL,
-
-        status TEXT,
-
-        shortfall_cover REAL,
-
-        additional_collateral_required REAL
-
+    return sqlite3.connect(
+        DATABASE_FILE
     )
 
-    """)
 
-    # -----------------------------
-    # Alert History
-    # -----------------------------
+# ============================================================
+# INITIALIZE DATABASE
+# ============================================================
 
-    cursor.execute("""
+def initialize_database():
 
-    CREATE TABLE IF NOT EXISTS alert_history
+    connection = get_connection()
 
-    (
+    cursor = connection.cursor()
 
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+    # --------------------------------------------------------
+    # COLLATERAL HISTORY
+    # --------------------------------------------------------
 
-        date TEXT,
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collateral_history (
 
-        borrower TEXT,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-        security TEXT,
+            date TEXT NOT NULL,
 
-        alert_type TEXT,
+            borrower TEXT NOT NULL,
 
-        sent_time TEXT
+            security TEXT NOT NULL,
 
+            price REAL,
+
+            shares REAL,
+
+            loan_amount REAL,
+
+            collateral_value REAL,
+
+            cover REAL,
+
+            required_cover REAL,
+
+            status TEXT,
+
+            shortfall_cover REAL,
+
+            additional_collateral_required REAL
+
+        )
+        """
     )
 
-    """)
+    # --------------------------------------------------------
+    # ALERT HISTORY
+    # --------------------------------------------------------
 
-    conn.commit()
-    conn.close()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS alert_history (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            date TEXT NOT NULL,
+
+            borrower TEXT NOT NULL,
+
+            security TEXT NOT NULL,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        )
+        """
+    )
+
+    connection.commit()
+
+    connection.close()
 
 
-# -------------------------------------------------
-# Save Collateral Record
-# -------------------------------------------------
+# ============================================================
+# SAVE COLLATERAL RECORD
+# ============================================================
 
 def save_record(record):
 
-    conn = sqlite3.connect(DATABASE_PATH)
+    connection = get_connection()
 
-    cursor = conn.cursor()
+    cursor = connection.cursor()
 
-    cursor.execute("""
+    cursor.execute(
+        """
+        INSERT INTO collateral_history (
 
-    INSERT INTO collateral_history
+            date,
+            borrower,
+            security,
+            price,
+            shares,
+            loan_amount,
+            collateral_value,
+            cover,
+            required_cover,
+            status,
+            shortfall_cover,
+            additional_collateral_required
 
-    (
+        )
 
-        date,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
 
-        borrower,
+        (
 
-        security,
+            record["date"],
 
-        price,
+            record["borrower"],
 
-        shares,
+            record["security"],
 
-        loan_amount,
+            record["price"],
 
-        collateral_value,
+            record["shares"],
 
-        cover,
+            record["loan_amount"],
 
-        required_cover,
+            record["collateral_value"],
 
-        status,
+            record["cover"],
 
-        shortfall_cover,
+            record["required_cover"],
 
-        additional_collateral_required
+            record["status"],
 
+            record["shortfall_cover"],
+
+            record[
+                "additional_collateral_required"
+            ]
+
+        )
     )
 
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    connection.commit()
 
-    """,
-
-    (
-
-        record["date"],
-
-        record["borrower"],
-
-        record["security"],
-
-        record["price"],
-
-        record["shares"],
-
-        record["loan_amount"],
-
-        record["collateral_value"],
-
-        record["cover"],
-
-        record["required_cover"],
-
-        record["status"],
-
-        record["shortfall_cover"],
-
-        record["additional_collateral_required"]
-
-    ))
-
-    conn.commit()
-    conn.close()
+    connection.close()
 
 
-# -------------------------------------------------
-# Check if Alert Already Sent
-# -------------------------------------------------
+# ============================================================
+# GET TODAY'S RECORDS
+# ============================================================
 
-def alert_already_sent(date, borrower, security):
+def get_records_by_date(date):
 
-    conn = sqlite3.connect(DATABASE_PATH)
+    connection = get_connection()
 
-    cursor = conn.cursor()
+    connection.row_factory = sqlite3.Row
 
-    cursor.execute("""
+    cursor = connection.cursor()
 
-    SELECT COUNT(*)
+    cursor.execute(
+        """
+        SELECT
 
-    FROM alert_history
+            date,
+            borrower,
+            security,
+            price,
+            shares,
+            loan_amount,
+            collateral_value,
+            cover,
+            required_cover,
+            status,
+            shortfall_cover,
+            additional_collateral_required
 
-    WHERE
+        FROM collateral_history
 
-    date=?
+        WHERE date = ?
 
-    AND borrower=?
-    AND security=?
+        ORDER BY
+            borrower,
+            security
 
-    """,
+        """,
 
-    (
-
-        date,
-
-        borrower,
-
-        security
-
-    ))
-
-    count = cursor.fetchone()[0]
-
-    conn.close()
-
-    return count > 0
-
-
-# -------------------------------------------------
-# Save Alert History
-# -------------------------------------------------
-
-def save_alert(date, borrower, security):
-
-    conn = sqlite3.connect(DATABASE_PATH)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-
-    INSERT INTO alert_history
-
-    (
-
-        date,
-
-        borrower,
-
-        security,
-
-        alert_type,
-
-        sent_time
-
+        (date,)
     )
-
-    VALUES
-
-    (?,?,?,?,time('now'))
-
-    """,
-
-    (
-
-        date,
-
-        borrower,
-
-        security,
-
-        "WhatsApp"
-
-    ))
-
-    conn.commit()
-
-    conn.close()
-
-
-# -------------------------------------------------
-# Fetch History
-# -------------------------------------------------
-
-def get_history():
-
-    conn = sqlite3.connect(DATABASE_PATH)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-
-    SELECT *
-
-    FROM collateral_history
-
-    ORDER BY id DESC
-
-    """)
 
     rows = cursor.fetchall()
 
-    conn.close()
+    connection.close()
 
-    return rows
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+# ============================================================
+# GET HISTORICAL RECORDS
+# ============================================================
+
+def get_all_records():
+
+    connection = get_connection()
+
+    connection.row_factory = sqlite3.Row
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+
+            date,
+            borrower,
+            security,
+            price,
+            shares,
+            loan_amount,
+            collateral_value,
+            cover,
+            required_cover,
+            status,
+            shortfall_cover,
+            additional_collateral_required
+
+        FROM collateral_history
+
+        ORDER BY
+            date DESC,
+            borrower,
+            security
+
+        """
+    )
+
+    rows = cursor.fetchall()
+
+    connection.close()
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+# ============================================================
+# CHECK WHETHER ALERT WAS ALREADY SENT
+# ============================================================
+
+def alert_already_sent(
+    date,
+    borrower,
+    security
+):
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+
+        FROM alert_history
+
+        WHERE date = ?
+
+        AND borrower = ?
+
+        AND security = ?
+
+        """,
+
+        (
+            date,
+            borrower,
+            security
+        )
+    )
+
+    result = cursor.fetchone()
+
+    connection.close()
+
+    return (
+        result is not None
+        and result[0] > 0
+    )
+
+
+# ============================================================
+# SAVE ALERT
+# ============================================================
+
+def save_alert(
+    date,
+    borrower,
+    security
+):
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO alert_history (
+
+            date,
+            borrower,
+            security
+
+        )
+
+        VALUES (?, ?, ?)
+
+        """,
+
+        (
+            date,
+            borrower,
+            security
+        )
+    )
+
+    connection.commit()
+
+    connection.close()

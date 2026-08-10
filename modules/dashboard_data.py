@@ -1,101 +1,211 @@
 import sqlite3
-import pandas as pd
 import os
+import pandas as pd
 
 
-DATABASE_PATH = "database/collateral.db"
+# ============================================================
+# ABSOLUTE DATABASE PATH
+# ============================================================
 
+BASE_DIR = os.path.dirname(
+    os.path.dirname(
+        os.path.abspath(__file__)
+    )
+)
+
+DATABASE_PATH = os.path.join(
+    BASE_DIR,
+    "database",
+    "collateral.db"
+)
+
+
+# ============================================================
+# GET ALL COLLATERAL HISTORY
+# ============================================================
 
 def get_collateral_history():
 
-    # Check if database exists
-    if not os.path.exists(DATABASE_PATH):
-        return pd.DataFrame()
+    print(
+        "DATABASE USED:",
+        DATABASE_PATH
+    )
+
+    conn = sqlite3.connect(
+        DATABASE_PATH
+    )
+
+    query = """
+        SELECT
+            id,
+            date,
+            borrower,
+            security,
+            price,
+            shares,
+            loan_amount,
+            collateral_value,
+            cover,
+            required_cover,
+            status,
+            shortfall_cover,
+            additional_collateral_required
+
+        FROM collateral_history
+
+        ORDER BY
+            date ASC,
+            id ASC
+    """
+
+    df = pd.read_sql_query(
+        query,
+        conn
+    )
+
+    conn.close()
+
+    return df
 
 
-    try:
+# ============================================================
+# GET CURRENT BORROWER SUMMARY
+# ============================================================
 
-        conn = sqlite3.connect(
-            DATABASE_PATH
-        )
-
-
-        query = """
-        SELECT *
-        FROM collateral
-        ORDER BY id DESC
-        """
-
-
-        df = pd.read_sql_query(
-            query,
-            conn
-        )
-
-
-        conn.close()
-
-
-        return df
-
-
-    except Exception as e:
-
-        print(
-            "Database Error:",
-            e
-        )
-
-        return pd.DataFrame()
-
-
-
-def get_latest_records():
-
-    df = get_collateral_history()
-
-
-    if df.empty:
-
-        return df
-
-
-    return df.head(10)
-
-
-
-def get_summary():
+def get_borrower_summary():
 
     df = get_collateral_history()
 
-
     if df.empty:
 
-        return {
-
-            "total_records": 0,
-
-            "total_collateral": 0,
-
-            "average_cover": 0
-
-        }
+        return pd.DataFrame()
 
 
-    return {
+    df["loan_amount"] = pd.to_numeric(
+        df["loan_amount"],
+        errors="coerce"
+    )
 
-        "total_records":
-            len(df),
+    df["collateral_value"] = pd.to_numeric(
+        df["collateral_value"],
+        errors="coerce"
+    )
 
 
-        "total_collateral":
-            df["collateral_value"].sum(),
+    latest_date = df["date"].max()
 
 
-        "average_cover":
-            round(
-                df["cover"].mean(),
-                2
+    latest_df = df[
+        df["date"] == latest_date
+    ].copy()
+
+
+    summary = (
+        latest_df
+        .groupby(
+            "borrower",
+            as_index=False
+        )
+        .agg(
+            loan_amount=(
+                "loan_amount",
+                "first"
+            ),
+
+            collateral_value=(
+                "collateral_value",
+                "sum"
             )
+        )
+    )
 
-    }
+
+    summary["total_cover"] = (
+        summary["collateral_value"]
+        /
+        summary["loan_amount"]
+    )
+
+
+    summary["required_cover"] = 2.00
+
+
+    summary["buffer"] = (
+        summary["total_cover"]
+        -
+        summary["required_cover"]
+    )
+
+
+    summary["status"] = summary.apply(
+        lambda row:
+        "🟢 OK Complied"
+        if row["total_cover"]
+        >= row["required_cover"]
+        else "🔴 Shortfall",
+        axis=1
+    )
+
+
+    return summary
+
+
+# ============================================================
+# HISTORICAL BORROWER COVER
+# ============================================================
+
+def get_historical_borrower_cover():
+
+    df = get_collateral_history()
+
+    if df.empty:
+
+        return pd.DataFrame()
+
+
+    df["loan_amount"] = pd.to_numeric(
+        df["loan_amount"],
+        errors="coerce"
+    )
+
+    df["collateral_value"] = pd.to_numeric(
+        df["collateral_value"],
+        errors="coerce"
+    )
+
+
+    historical = (
+        df.groupby(
+            [
+                "date",
+                "borrower"
+            ],
+            as_index=False
+        )
+        .agg(
+            loan_amount=(
+                "loan_amount",
+                "first"
+            ),
+
+            collateral_value=(
+                "collateral_value",
+                "sum"
+            )
+        )
+    )
+
+
+    historical["total_cover"] = (
+        historical["collateral_value"]
+        /
+        historical["loan_amount"]
+    )
+
+
+    return historical.sort_values(
+        [
+            "date",
+            "borrower"
+        ]
+    )
