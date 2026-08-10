@@ -1,23 +1,43 @@
-# Python cache
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
 
 # Secrets
 config.py
+.env
+*.env
 
-# Database
+# Local database
 database/
 *.db
+*.sqlite
+*.sqlite3
 
-# Reports
+# Logs
+logs/
+
+# Generated reports
 reports/
 
-# Local data
-data/
+# Temporary/helper files
+check_excel_history.py
+cleanup_duplicates.py
+cleanup_history.py
+fix_06_aug_jsw_energy.py
+fix_required_cover.py
+remove_sunday.py
+restore_from_reports.py
+restore_history.py
+restore_history_final.py
+standardize_dates.py
+verify_06_aug.py
 
-# Testing files
-test_*.py
-view_database.py
-
-# Environment
-.env
+# Windows
+Thumbs.db
+Desktop.ini

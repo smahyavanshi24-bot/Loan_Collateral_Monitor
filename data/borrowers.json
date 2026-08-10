@@ -1,0 +1,29 @@
+{
+    "Everbest": {
+        "loan_amount": 1200000000,
+        "securities": {
+            "JSW Energy": {
+                "shares": 2533300,
+                "required_cover": 1.00
+            },
+            "JSW Steel": {
+                "shares": 1096000,
+                "required_cover": 1.00
+            }
+        }
+    },
+
+    "Siddeshwari": {
+        "loan_amount": 2500000000,
+        "securities": {
+            "JSW Energy": {
+                "shares": 9200000,
+                "required_cover": 1.50
+            },
+            "Jindal Steel & Power": {
+                "shares": 1600000,
+                "required_cover": 0.50
+            }
+        }
+    }
+}

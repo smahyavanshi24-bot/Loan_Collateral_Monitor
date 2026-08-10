@@ -1,26 +1,20 @@
 import streamlit as st
+import pandas as pd
+import altair as alt
+
+from modules.dashboard_theme import load_theme
+from modules.dashboard_data import get_collateral_history
+from modules.risk_analysis import calculate_risk
+from modules.market_monitor import add_market_monitoring
+from modules.borrower_summary import borrower_summary
+from modules.stress_test import run_stress_test
+from modules.margin_call import calculate_margin_call
+from modules.risk_alert_engine import generate_risk_alerts
 
 
-from modules.dashboard_data import (
-    get_collateral_history,
-    get_borrower_summary
-)
-
-
-from modules.risk_analysis import (
-    calculate_risk
-)
-
-
-from modules.market_monitor import (
-    add_market_monitoring
-)
-
-
-
-# -------------------------------------------------
-# Page Configuration
-# -------------------------------------------------
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
 
 st.set_page_config(
     page_title="Loan Collateral Risk Dashboard",
@@ -28,191 +22,277 @@ st.set_page_config(
     layout="wide"
 )
 
+load_theme()
 
 
-# -------------------------------------------------
-# Header
-# -------------------------------------------------
+# ============================================================
+# HEADER
+# ============================================================
 
-st.title(
-    "📊 Loan Collateral Risk Monitoring System"
-)
-
+st.title("📊 Loan Collateral Risk Monitoring System")
 
 st.caption(
     "Credit Risk Dashboard | Collateral & Security Cover Monitoring"
 )
 
 
-
-# -------------------------------------------------
-# Load Database
-# -------------------------------------------------
+# ============================================================
+# LOAD COLLATERAL HISTORY
+# ============================================================
 
 df = get_collateral_history()
 
 
+# ============================================================
+# NO DATA CHECK
+# ============================================================
 
 if df.empty:
-
-    st.warning(
-        "No data available. Please run main.py first."
+    st.warning("No collateral data available.")
+    st.info(
+        "Please run the collateral monitoring process first."
     )
-
     st.stop()
 
 
+# ============================================================
+# CLEAN DATA
+# ============================================================
 
-# -------------------------------------------------
-# Risk Calculation
-# -------------------------------------------------
-
-risk_df = calculate_risk(df)
-
+df = df.copy()
 
 
-# -------------------------------------------------
-# Market Monitoring
-# -------------------------------------------------
+# ============================================================
+# NORMALIZE DATE
+# ============================================================
+
+df["date"] = pd.to_datetime(
+    df["date"],
+    errors="coerce"
+)
+
+df = df[df["date"].notna()].copy()
+
+# Remove time completely
+df["date"] = df["date"].dt.normalize()
+
+
+# ============================================================
+# REMOVE SATURDAY AND SUNDAY
+# ============================================================
+
+df = df[
+    df["date"].dt.weekday < 5
+].copy()
+
+
+# ============================================================
+# SORT DATA
+# ============================================================
+
+df = df.sort_values(
+    ["date", "borrower", "security"]
+).reset_index(drop=True)
+
+
+# ============================================================
+# LATEST TRADING DATE
+# ============================================================
+
+latest_trading_date = df["date"].max()
+
+
+# ============================================================
+# RISK CALCULATION
+# ============================================================
+
+risk_df = calculate_risk(
+    df.copy()
+)
+
+
+# ============================================================
+# NORMALIZE RISK DATE
+# ============================================================
+
+if "date" in risk_df.columns:
+
+    risk_df["date"] = pd.to_datetime(
+        risk_df["date"],
+        errors="coerce"
+    )
+
+    risk_df = risk_df[
+        risk_df["date"].notna()
+    ].copy()
+
+    risk_df["date"] = risk_df["date"].dt.normalize()
+
+    risk_df = risk_df[
+        risk_df["date"].dt.weekday < 5
+    ].copy()
+
+
+# ============================================================
+# MARKET MONITORING
+# ============================================================
 
 market_df = add_market_monitoring(
-    risk_df
+    risk_df.copy()
 )
 
 
+# ============================================================
+# NORMALIZE MARKET DATE
+# ============================================================
 
-# -------------------------------------------------
-# Executive Summary
-# -------------------------------------------------
+if "date" in market_df.columns:
 
-st.subheader(
-    "📌 Executive Summary"
-)
-
-
-
-total_loan = (
-    df["loan_amount"]
-    .drop_duplicates()
-    .sum()
-)
-
-
-
-total_collateral = (
-    df["collateral_value"]
-    .sum()
-)
-
-
-
-portfolio_cover = (
-    total_collateral /
-    total_loan
-)
-
-
-
-critical_count = len(
-    risk_df[
-        risk_df["risk_status"]
-        ==
-        "🔴 Action Required"
-    ]
-)
-
-
-
-if critical_count > 0:
-
-    portfolio_status = "🔴 Action Required"
-
-
-elif portfolio_cover < 2:
-
-    portfolio_status = "🟡 Watch"
-
-
-else:
-
-    portfolio_status = "🟢 Safe"
-
-
-
-
-col1, col2, col3, col4 = st.columns(4)
-
-
-
-with col1:
-
-    st.metric(
-        "Loan Exposure",
-        f"₹{total_loan/10000000:.2f} Cr"
+    market_df["date"] = pd.to_datetime(
+        market_df["date"],
+        errors="coerce"
     )
 
+    market_df = market_df[
+        market_df["date"].notna()
+    ].copy()
+
+    market_df["date"] = market_df["date"].dt.normalize()
+
+    market_df = market_df[
+        market_df["date"].dt.weekday < 5
+    ].copy()
 
 
-with col2:
+# ============================================================
+# 1. BORROWER RISK SUMMARY
+# ============================================================
 
-    st.metric(
-        "Collateral Value",
-        f"₹{total_collateral/10000000:.2f} Cr"
-    )
-
+st.subheader("👥 Borrower Risk Summary")
 
 
-with col3:
-
-    st.metric(
-        "Portfolio Cover",
-        f"{portfolio_cover:.2f}x"
-    )
-
-
-
-with col4:
-
-    st.metric(
-        "Risk Status",
-        portfolio_status
-    )
-
-
-
-# -------------------------------------------------
-# Borrower Summary
-# -------------------------------------------------
-
-st.subheader(
-    "👥 Borrower Wise Position"
+borrower_risk = borrower_summary(
+    df.copy()
 )
 
 
+borrower_columns = [
+    "borrower",
+    "loan_amount",
+    "collateral_value",
+    "total_cover",
+    "required_cover",
+    "buffer",
+    "status"
+]
 
-borrower_summary = get_borrower_summary()
 
+available_borrower_columns = [
+    column
+    for column in borrower_columns
+    if column in borrower_risk.columns
+]
 
 
 st.dataframe(
-    borrower_summary,
-    use_container_width=True
+    borrower_risk[
+        available_borrower_columns
+    ],
+    width="stretch",
+    hide_index=True
 )
 
 
+# ============================================================
+# 2. SECURITY RISK MONITORING
+# ONLY LATEST TRADING DATE
+# ============================================================
 
-# -------------------------------------------------
-# Security Risk Monitoring
-# -------------------------------------------------
+st.subheader("🚦 Security Risk Monitoring")
 
-st.subheader(
-    "🚦 Security Risk Monitoring"
-)
 
+security_columns = [
+    "date",
+    "borrower",
+    "security",
+    "cover",
+    "required_cover",
+    "buffer",
+    "risk_status"
+]
+
+
+available_security_columns = [
+    column
+    for column in security_columns
+    if column in risk_df.columns
+]
 
 
 security_view = risk_df[
-    [
+    risk_df["date"] == latest_trading_date
+].copy()
+
+
+security_view = security_view[
+    available_security_columns
+]
+
+
+security_view = security_view.sort_values(
+    ["borrower", "security"]
+)
+
+
+if "date" in security_view.columns:
+
+    security_view["date"] = (
+        security_view["date"]
+        .dt.strftime("%d-%b-%Y")
+    )
+
+
+st.dataframe(
+    security_view,
+    width="stretch",
+    hide_index=True
+)
+
+
+st.caption(
+    "Latest available trading date: "
+    + latest_trading_date.strftime("%d-%b-%Y")
+)
+
+
+# ============================================================
+# 3. IMMEDIATE ATTENTION REQUIRED
+# ============================================================
+
+st.subheader("🚨 Immediate Attention Required")
+
+
+critical = risk_df[
+    risk_df["risk_status"].astype(str)
+    == "🔴 Action Required"
+].copy()
+
+
+critical_latest = critical[
+    critical["date"] == latest_trading_date
+].copy()
+
+
+if not critical_latest.empty:
+
+    st.error(
+        f"{len(critical_latest)} security record(s) "
+        "below required cover"
+    )
+
+
+    critical_columns = [
+        "date",
         "borrower",
         "security",
         "cover",
@@ -220,150 +300,656 @@ security_view = risk_df[
         "buffer",
         "risk_status"
     ]
-]
 
 
-
-st.dataframe(
-    security_view,
-    use_container_width=True
-)
-
-
-
-# -------------------------------------------------
-# Critical Alerts
-# -------------------------------------------------
-
-st.subheader(
-    "🚨 Immediate Attention Required"
-)
+    available_critical_columns = [
+        column
+        for column in critical_columns
+        if column in critical_latest.columns
+    ]
 
 
-
-critical = risk_df[
-    risk_df["risk_status"]
-    ==
-    "🔴 Action Required"
-]
+    critical_view = critical_latest[
+        available_critical_columns
+    ].copy()
 
 
+    if "date" in critical_view.columns:
 
-if len(critical) > 0:
-
-    st.error(
-        f"{len(critical)} securities below required cover"
-    )
+        critical_view["date"] = (
+            critical_view["date"]
+            .dt.strftime("%d-%b-%Y")
+        )
 
 
     st.dataframe(
-        critical,
-        use_container_width=True
+        critical_view,
+        width="stretch",
+        hide_index=True
     )
-
 
 else:
 
     st.success(
-        "No collateral shortfall detected"
+        "No collateral shortfall detected for the latest "
+        "trading date."
     )
 
 
+# ============================================================
+# 4. MARKET MOVEMENT MONITORING
+# ONLY LATEST TRADING DATE
+# ============================================================
 
-# -------------------------------------------------
-# Market Movement
-# -------------------------------------------------
+st.subheader("📉 Market Movement Monitoring")
 
-st.subheader(
-    "📉 Market Movement Monitoring"
-)
 
+market_columns = [
+    "date",
+    "borrower",
+    "security",
+    "price",
+    "daily_change_%",
+    "market_alert"
+]
+
+
+available_market_columns = [
+    column
+    for column in market_columns
+    if column in market_df.columns
+]
 
 
 market_view = market_df[
-    [
-        "borrower",
-        "security",
-        "price",
-        "daily_change_%",
-        "market_alert"
-    ]
+    market_df["date"] == latest_trading_date
+].copy()
+
+
+market_view = market_view[
+    available_market_columns
 ]
 
+
+market_view = market_view.sort_values(
+    ["borrower", "security"]
+)
+
+
+if "date" in market_view.columns:
+
+    market_view["date"] = (
+        market_view["date"]
+        .dt.strftime("%d-%b-%Y")
+    )
 
 
 st.dataframe(
     market_view,
-    use_container_width=True
+    width="stretch",
+    hide_index=True
 )
 
+# ============================================================
+# 5. CONSOLIDATED RISK ALERTS
+# ============================================================
 
+st.subheader("🚨 Consolidated Risk Alerts")
 
-market_alerts = market_df[
-    market_df["market_alert"]
-    !=
-    "Normal"
-]
+try:
 
+    alert_df = generate_risk_alerts(
+        risk_df.copy(),
+        market_df.copy()
+    )
 
+    if alert_df is not None and not alert_df.empty:
 
-if len(market_alerts) > 0:
+        alert_columns = [
+            "date",
+            "borrower",
+            "security",
+            "price",
+            "cover",
+            "required_cover",
+            "buffer",
+            "alert_level",
+            "alert_reason",
+            "action_required"
+        ]
+
+        available_alert_columns = [
+            column
+            for column in alert_columns
+            if column in alert_df.columns
+        ]
+
+        alert_view = alert_df[
+            available_alert_columns
+        ].copy()
+
+        # ----------------------------------------------------
+        # Show only latest trading date
+        # ----------------------------------------------------
+
+        if "date" in alert_view.columns:
+
+            alert_view = alert_view[
+                alert_view["date"]
+                == latest_trading_date
+            ].copy()
+
+            alert_view["date"] = (
+                alert_view["date"]
+                .dt.strftime("%d-%b-%Y")
+            )
+
+        # ----------------------------------------------------
+        # Critical alerts
+        # ----------------------------------------------------
+
+        critical_alerts = alert_view[
+            alert_view["alert_level"]
+            == "🔴 Critical"
+        ]
+
+        if not critical_alerts.empty:
+
+            st.error(
+                f"⚠️ {len(critical_alerts)} "
+                "critical risk alert(s) detected."
+            )
+
+        # ----------------------------------------------------
+        # Warning alerts
+        # ----------------------------------------------------
+
+        warning_alerts = alert_view[
+            alert_view["alert_level"]
+            == "🟠 Warning"
+        ]
+
+        if not warning_alerts.empty:
+
+            st.warning(
+                f"⚠️ {len(warning_alerts)} "
+                "warning(s) require monitoring."
+            )
+
+        # ----------------------------------------------------
+        # No alerts
+        # ----------------------------------------------------
+
+        if (
+            critical_alerts.empty
+            and warning_alerts.empty
+        ):
+
+            st.success(
+                "🟢 No critical or warning risk alerts "
+                "for the latest trading date."
+            )
+
+        # ----------------------------------------------------
+        # Display alerts
+        # ----------------------------------------------------
+
+        st.dataframe(
+            alert_view,
+            width="stretch",
+            hide_index=True
+        )
+
+    else:
+
+        st.info(
+            "No consolidated risk alert data available."
+        )
+
+except Exception as e:
 
     st.warning(
-        "🚨 Market Movement Alert"
+        "Risk alert engine could not be calculated: "
+        + str(e)
+    )
+    
+# ============================================================
+# 5. COLLATERAL STRESS TESTING
+# ============================================================
+
+st.subheader("📉 Collateral Stress Testing")
+
+
+try:
+
+    stress_df = run_stress_test(
+        df.copy()
     )
 
 
-    st.dataframe(
-        market_alerts,
-        use_container_width=True
+    if stress_df is not None and not stress_df.empty:
+
+        st.dataframe(
+            stress_df,
+            width="stretch",
+            hide_index=True
+        )
+
+    else:
+
+        st.info(
+            "No stress-test data available."
+        )
+
+
+except Exception as e:
+
+    st.warning(
+        "Stress testing could not be calculated: "
+        + str(e)
     )
 
 
-else:
+# ============================================================
+# 6. MARGIN CALL MONITORING
+# ============================================================
 
-    st.success(
-        "No major price movement detected"
+st.subheader("💰 Margin Call Monitoring")
+
+
+try:
+
+    margin_df = calculate_margin_call(
+        df.copy()
     )
 
 
+    if margin_df is not None and not margin_df.empty:
 
-# -------------------------------------------------
-# Charts
-# -------------------------------------------------
-
-st.subheader(
-    "📈 Security Cover Comparison"
-)
-
+        st.dataframe(
+            margin_df,
+            width="stretch",
+            hide_index=True
+        )
 
 
-chart_data = risk_df[
-    [
-        "security",
-        "cover"
-    ]
+        if "margin_call_status" in margin_df.columns:
+
+            margin_required = margin_df[
+                margin_df[
+                    "margin_call_status"
+                ].astype(str).str.contains(
+                    "MARGIN CALL REQUIRED",
+                    case=False,
+                    na=False
+                )
+            ]
+
+
+            if not margin_required.empty:
+
+                st.error(
+                    f"⚠️ {len(margin_required)} "
+                    "margin call(s) required"
+                )
+
+            else:
+
+                st.success(
+                    "No margin call required."
+                )
+
+
+    else:
+
+        st.info(
+            "No margin-call data available."
+        )
+
+
+except Exception as e:
+
+    st.warning(
+        "Margin-call calculation could not be completed: "
+        + str(e)
+    )
+
+
+# ============================================================
+# 7. COMPLETE HISTORICAL DATA
+# ============================================================
+
+st.subheader("📚 View Complete Historical Data")
+
+
+historical_view = df.copy()
+
+
+historical_columns = [
+    "date",
+    "borrower",
+    "security",
+    "price",
+    "shares",
+    "loan_amount",
+    "collateral_value",
+    "cover",
+    "required_cover",
+    "status"
 ]
 
 
+available_historical_columns = [
+    column
+    for column in historical_columns
+    if column in historical_view.columns
+]
 
-st.bar_chart(
-    chart_data.set_index(
-        "security"
+
+historical_view = historical_view[
+    available_historical_columns
+].sort_values(
+    ["date", "borrower", "security"],
+    ascending=[False, True, True]
+)
+
+
+if "date" in historical_view.columns:
+
+    historical_view["date"] = (
+        historical_view["date"]
+        .dt.strftime("%d-%b-%Y")
+    )
+
+
+st.dataframe(
+    historical_view,
+    width="stretch",
+    hide_index=True
+)
+
+
+# ============================================================
+# 8. HISTORICAL BORROWER COVER MOVEMENT
+# DATE-WISE ONLY
+# ============================================================
+
+st.subheader("📈 Historical Borrower Cover Movement")
+
+
+cover_history = df.copy()
+
+
+# ============================================================
+# NUMERIC CONVERSION
+# ============================================================
+
+cover_history["collateral_value"] = pd.to_numeric(
+    cover_history["collateral_value"],
+    errors="coerce"
+)
+
+
+cover_history["loan_amount"] = pd.to_numeric(
+    cover_history["loan_amount"],
+    errors="coerce"
+)
+
+
+# ============================================================
+# REMOVE INVALID RECORDS
+# ============================================================
+
+cover_history = cover_history[
+    cover_history["date"].notna()
+    &
+    cover_history["collateral_value"].notna()
+    &
+    cover_history["loan_amount"].notna()
+].copy()
+
+
+# ============================================================
+# REMOVE WEEKENDS
+# ============================================================
+
+cover_history = cover_history[
+    cover_history["date"].dt.weekday < 5
+].copy()
+
+
+# ============================================================
+# BORROWER DAILY COLLATERAL
+# ============================================================
+
+borrower_daily = (
+    cover_history
+    .groupby(
+        ["date", "borrower"],
+        as_index=False
+    )
+    .agg(
+        collateral_value=(
+            "collateral_value",
+            "sum"
+        ),
+        loan_amount=(
+            "loan_amount",
+            "first"
+        )
     )
 )
 
 
+# ============================================================
+# BORROWER TOTAL COVER
+# ============================================================
 
-# -------------------------------------------------
-# Complete Data
-# -------------------------------------------------
+borrower_daily["total_cover"] = (
+    borrower_daily["collateral_value"]
+    /
+    borrower_daily["loan_amount"]
+)
 
-with st.expander(
-    "View Complete Historical Data"
-):
 
-    st.dataframe(
-        market_df,
-        use_container_width=True
+# ============================================================
+# CLEAN COVER
+# ============================================================
+
+borrower_daily["total_cover"] = pd.to_numeric(
+    borrower_daily["total_cover"],
+    errors="coerce"
+)
+
+
+borrower_daily = borrower_daily[
+    borrower_daily["total_cover"].notna()
+].copy()
+
+
+# ============================================================
+# SORT BY DATE
+# ============================================================
+
+borrower_daily = borrower_daily.sort_values(
+    ["date", "borrower"]
+).reset_index(drop=True)
+
+
+# ============================================================
+# HISTORICAL COVER TABLE
+# ============================================================
+
+cover_table = borrower_daily[
+    [
+        "date",
+        "borrower",
+        "total_cover"
+    ]
+].copy()
+
+
+cover_table["date"] = (
+    cover_table["date"]
+    .dt.strftime("%d-%b-%Y")
+)
+
+
+cover_table["total_cover"] = (
+    cover_table["total_cover"]
+    .round(2)
+)
+
+
+st.dataframe(
+    cover_table,
+    width="stretch",
+    hide_index=True
+)
+
+
+# ============================================================
+# DATE-WISE COVER CHART
+# ============================================================
+#
+# X-AXIS:
+# Trading Date ONLY
+#
+# Y-AXIS:
+# 0.00
+# 0.25
+# 0.50
+# 0.75
+# 1.00
+# ...
+# 3.00
+#
+# ============================================================
+
+if not borrower_daily.empty:
+
+    chart_data = borrower_daily[
+        [
+            "date",
+            "borrower",
+            "total_cover"
+        ]
+    ].copy()
+
+
+    # Make absolutely sure date contains
+    # no time information.
+
+    chart_data["date"] = pd.to_datetime(
+        chart_data["date"]
+    ).dt.date
+
+
+    chart_data = chart_data.rename(
+        columns={
+            "date": "Trading Date",
+            "borrower": "Borrower",
+            "total_cover": "Borrower Cover"
+        }
     )
+
+
+    # ========================================================
+    # ALTair DATE-WISE CHART
+    # ========================================================
+
+    cover_chart = (
+        alt.Chart(chart_data)
+        .mark_line(
+            point=True
+        )
+        .encode(
+
+            x=alt.X(
+                "Trading Date:T",
+                title="Trading Date",
+                axis=alt.Axis(
+                    format="%d-%b-%Y",
+                    labelAngle=-45
+                )
+            ),
+
+            y=alt.Y(
+                "Borrower Cover:Q",
+                title="Borrower Cover (x)",
+
+                scale=alt.Scale(
+                    domain=[
+                        0,
+                        3
+                    ],
+                    nice=False
+                ),
+
+                axis=alt.Axis(
+                    values=[
+                        0,
+                        0.25,
+                        0.50,
+                        0.75,
+                        1.00,
+                        1.25,
+                        1.50,
+                        1.75,
+                        2.00,
+                        2.25,
+                        2.50,
+                        2.75,
+                        3.00
+                    ],
+                    format=".2f"
+                )
+            ),
+
+            color=alt.Color(
+                "Borrower:N",
+                title="Borrower"
+            ),
+
+            tooltip=[
+                alt.Tooltip(
+                    "Trading Date:T",
+                    title="Date",
+                    format="%d-%b-%Y"
+                ),
+
+                alt.Tooltip(
+                    "Borrower:N",
+                    title="Borrower"
+                ),
+
+                alt.Tooltip(
+                    "Borrower Cover:Q",
+                    title="Cover",
+                    format=".2f"
+                )
+            ]
+        )
+        .properties(
+            height=450
+        )
+    )
+
+
+    st.altair_chart(
+        cover_chart,
+        width="stretch"
+    )
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.divider()
+
+
+st.caption(
+    "Loan Collateral Risk Monitoring System | "
+    "Historical records are retained by trading date."
+)
