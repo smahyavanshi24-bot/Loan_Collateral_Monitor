@@ -14,6 +14,7 @@ from modules.share_movements import (
     initialize_share_movements,
     record_share_movement,
     get_share_movements,
+    get_original_shares,
     get_current_shares,
 )
 
@@ -647,14 +648,11 @@ except Exception as e:
 # ============================================================
 
 if movement_df is None:
-
     movement_df = pd.DataFrame()
-
 
 if not movement_df.empty:
 
     movement_view = movement_df.copy()
-
 
     # --------------------------------------------------------
     # NORMALIZE COLUMN NAMES
@@ -665,250 +663,204 @@ if not movement_df.empty:
         for column in movement_view.columns
     ]
 
-
     # --------------------------------------------------------
-    # DATE
+    # BUILD DISPLAY TABLE
     # --------------------------------------------------------
 
-    date_column = None
+    display_rows = []
 
-    for candidate in [
-        "movement_date",
-        "Movement Date",
-        "date",
-        "Date",
-    ]:
+    for _, movement in movement_view.iterrows():
 
-        if candidate in movement_view.columns:
+        borrower = movement["borrower"]
+        security = movement["security"]
 
-            date_column = candidate
-            break
-
-
-    if date_column is not None:
-
-        movement_view[date_column] = pd.to_datetime(
-            movement_view[date_column],
-            errors="coerce",
+        # TRUE ORIGINAL SHARE BALANCE
+        original_shares = get_original_shares(
+            df,
+            borrower,
+            security
         )
 
+        # OPENING BALANCE BEFORE THIS MOVEMENT
+        opening_shares = movement.get(
+            "opening_shares",
+            None
+        )
 
-    # --------------------------------------------------------
-    # NUMERIC SHARE COLUMNS
-    # --------------------------------------------------------
+        # RESULTING BALANCE AFTER THIS MOVEMENT
+        resulting_shares = movement.get(
+            "resulting_shares",
+            None
+        )
 
-    for column in [
-        "original_shares",
-        "current_shares",
-        "movement_shares",
-        "resulting_shares",
-        "Original Shares",
-        "Current Shares",
-        "Movement Shares",
-        "Resulting Shares",
-    ]:
+        # ----------------------------------------------------
+        # FALLBACK CALCULATION
+        # ----------------------------------------------------
 
-        if column in movement_view.columns:
+        if pd.isna(opening_shares):
 
-            movement_view[column] = pd.to_numeric(
-                movement_view[column],
-                errors="coerce",
+            opening_shares = original_shares
+
+            previous_movements = movement_view[
+                (movement_view["borrower"] == borrower)
+                &
+                (movement_view["security"] == security)
+                &
+                (
+                    pd.to_datetime(
+                        movement_view["movement_date"]
+                    )
+                    <
+                    pd.to_datetime(
+                        movement["movement_date"]
+                    )
+                )
+            ].sort_values(
+                ["movement_date", "id"]
             )
 
+            for _, previous in previous_movements.iterrows():
 
-    # --------------------------------------------------------
-    # RENAME TO DISPLAY NAMES
-    # --------------------------------------------------------
+                previous_type = str(
+                    previous["movement_type"]
+                ).upper()
 
-    rename_map = {
-
-        "borrower": "Borrower",
-
-        "Borrower": "Borrower",
-
-        "security": "Security",
-
-        "Security": "Security",
-
-        "original_shares": "Original Shares",
-
-        "Original Shares": "Original Shares",
-
-        "current_shares": "Current No. of Shares",
-
-        "Current Shares": "Current No. of Shares",
-
-        "movement_date": "Movement Date",
-
-        "Movement Date": "Movement Date",
-
-        "movement_type": "Movement",
-
-        "Movement Type": "Movement",
-
-        "movement_shares": "Movement Shares",
-
-        "Movement Shares": "Movement Shares",
-
-        "resulting_shares": "Resulting Shares",
-
-        "Resulting Shares": "Resulting Shares",
-    }
-
-
-    movement_view = movement_view.rename(
-        columns=rename_map
-    )
-
-
-    # --------------------------------------------------------
-    # CREATE REQUIRED COLUMNS IF NECESSARY
-    # --------------------------------------------------------
-
-    required_display_columns = [
-        "Borrower",
-        "Security",
-        "Original Shares",
-        "Current No. of Shares",
-        "Movement Date",
-        "Movement",
-        "Movement Shares",
-        "Resulting Shares",
-    ]
-
-
-    for column in required_display_columns:
-
-        if column not in movement_view.columns:
-
-            movement_view[column] = pd.NA
-
-
-    # --------------------------------------------------------
-    # SORT MOVEMENTS
-    # --------------------------------------------------------
-
-    movement_view["Movement Date Sort"] = pd.to_datetime(
-        movement_view["Movement Date"],
-        errors="coerce",
-    )
-
-
-    movement_view = movement_view.sort_values(
-        [
-            "Borrower",
-            "Security",
-            "Movement Date Sort",
-        ],
-        ascending=[
-            True,
-            True,
-            True,
-        ],
-    )
-
-
-    # --------------------------------------------------------
-    # FORMAT DATE
-    # --------------------------------------------------------
-
-    movement_view["Movement Date"] = (
-        pd.to_datetime(
-            movement_view["Movement Date"],
-            errors="coerce",
-        )
-        .dt.strftime("%d-%b-%Y")
-    )
-
-
-    movement_view["Movement Date"] = (
-        movement_view["Movement Date"]
-        .fillna("—")
-    )
-
-
-    # --------------------------------------------------------
-    # FORMAT SHARES
-    # --------------------------------------------------------
-
-    share_display_columns = [
-        "Original Shares",
-        "Current No. of Shares",
-        "Movement Shares",
-        "Resulting Shares",
-    ]
-
-
-    for column in share_display_columns:
-
-        if column in movement_view.columns:
-
-            movement_view[column] = (
-                pd.to_numeric(
-                    movement_view[column],
-                    errors="coerce",
+                previous_shares = pd.to_numeric(
+                    previous["movement_shares"],
+                    errors="coerce"
                 )
-                .fillna(0)
-                .astype(int)
-                .map(lambda x: f"{x:,}")
+
+                if pd.isna(previous_shares):
+                    continue
+
+                if previous_type == "ADDITION":
+                    opening_shares += int(previous_shares)
+
+                elif previous_type == "RELEASE":
+                    opening_shares -= int(previous_shares)
+
+        # ----------------------------------------------------
+        # RESULTING SHARES
+        # ----------------------------------------------------
+
+        if pd.isna(resulting_shares):
+
+            movement_shares = pd.to_numeric(
+                movement["movement_shares"],
+                errors="coerce"
             )
 
+            if pd.isna(movement_shares):
+                movement_shares = 0
 
-    # --------------------------------------------------------
-    # FORMAT MOVEMENT SHARES
-    # --------------------------------------------------------
+            movement_type = str(
+                movement["movement_type"]
+            ).upper()
 
-    if "Movement Shares" in movement_view.columns:
-
-        def format_movement(value):
-
-            try:
-
-                numeric_value = int(
-                    str(value)
-                    .replace(",", "")
+            if movement_type == "ADDITION":
+                resulting_shares = (
+                    int(opening_shares)
+                    + int(movement_shares)
                 )
 
-                if numeric_value > 0:
+            elif movement_type == "RELEASE":
+                resulting_shares = (
+                    int(opening_shares)
+                    - int(movement_shares)
+                )
 
-                    return f"+{numeric_value:,}"
+            else:
+                resulting_shares = int(opening_shares)
 
-                if numeric_value < 0:
+        # ----------------------------------------------------
+        # SIGNED MOVEMENT FOR DISPLAY
+        # ----------------------------------------------------
 
-                    return f"−{abs(numeric_value):,}"
-
-                return "—"
-
-            except Exception:
-
-                return "—"
-
-
-        movement_view["Movement Shares"] = (
-            movement_view["Movement Shares"]
-            .apply(format_movement)
+        movement_shares = pd.to_numeric(
+            movement["movement_shares"],
+            errors="coerce"
         )
 
+        if pd.isna(movement_shares):
+            movement_shares = 0
+
+        movement_type = str(
+            movement["movement_type"]
+        ).upper()
+
+        if movement_type == "RELEASE":
+            signed_movement = -abs(
+                int(movement_shares)
+            )
+        else:
+            signed_movement = abs(
+                int(movement_shares)
+            )
+
+        # ----------------------------------------------------
+        # DATE
+        # ----------------------------------------------------
+
+        movement_date = pd.to_datetime(
+            movement["movement_date"],
+            errors="coerce"
+        )
+
+        display_rows.append(
+            {
+                "Borrower": borrower,
+                "Security": security,
+                "Original Shares": int(original_shares),
+                "Current No. of Shares": int(opening_shares),
+                "Movement Date": (
+                    movement_date.strftime("%d-%b-%Y")
+                    if pd.notna(movement_date)
+                    else "—"
+                ),
+                "Movement": movement_type,
+                "Movement Shares": signed_movement,
+                "Resulting Shares": int(resulting_shares),
+            }
+        )
+
+    movement_display = pd.DataFrame(display_rows)
 
     # --------------------------------------------------------
-    # SELECT ONLY THE ONE REQUIRED TABLE
+    # FORMAT NUMBERS
     # --------------------------------------------------------
 
-    movement_view = movement_view[
-        required_display_columns
-    ]
+    movement_display["Original Shares"] = (
+        movement_display["Original Shares"]
+        .map(lambda x: f"{x:,}")
+    )
 
+    movement_display["Current No. of Shares"] = (
+        movement_display["Current No. of Shares"]
+        .map(lambda x: f"{x:,}")
+    )
+
+    movement_display["Movement Shares"] = (
+        movement_display["Movement Shares"]
+        .map(
+            lambda x:
+            f"{x:+,}"
+        )
+    )
+
+    movement_display["Resulting Shares"] = (
+        movement_display["Resulting Shares"]
+        .map(lambda x: f"{x:,}")
+    )
 
     # --------------------------------------------------------
     # DISPLAY
     # --------------------------------------------------------
 
     st.dataframe(
-        movement_view,
-        width="stretch",
+        movement_display,
+        use_container_width=True,
         hide_index=True,
     )
-
 
 else:
 
