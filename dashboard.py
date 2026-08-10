@@ -9,6 +9,9 @@ from modules.market_monitor import add_market_monitoring
 from modules.borrower_summary import borrower_summary
 from modules.stress_test import run_stress_test
 from modules.formatting import format_crore, format_cover
+from modules.collateral_rebalancing import calculate_collateral_rebalancing
+from modules.collateral_release import calculate_release_request
+from modules.collateral_release import calculate_release_request
 
 
 # ============================================================
@@ -503,8 +506,177 @@ except Exception as e:
         + str(e)
     )
 
+
 # ============================================================
-# 7. COMPLETE HISTORICAL DATA
+# 7. COLLATERAL REBALANCING
+# ============================================================
+
+st.subheader("🔄 Collateral Rebalancing")
+
+try:
+
+    rebalancing_df = calculate_collateral_rebalancing(
+        df.copy()
+    )
+
+    if (
+        rebalancing_df is not None
+        and not rebalancing_df.empty
+    ):
+
+        rebalancing_view = rebalancing_df.copy()
+
+        # ----------------------------------------------------
+        # Convert financial amounts to ₹ Crore
+        # ----------------------------------------------------
+
+        crore_columns = [
+            "Current Collateral",
+            "Loan Amount",
+            "Minimum Required Collateral",
+            "Release Target Collateral",
+            "Excess Collateral",
+            "Shortfall Collateral",
+            "Release Value",
+            "Additional Collateral",
+            "Recommended Collateral"
+        ]
+
+        for column in crore_columns:
+
+            if column in rebalancing_view.columns:
+
+                rebalancing_view[column] = (
+                    rebalancing_view[column]
+                    .apply(format_crore)
+                )
+
+        # ----------------------------------------------------
+        # Format cover
+        # ----------------------------------------------------
+
+        cover_columns = [
+            "Current Cover",
+            "Cover After Action"
+        ]
+
+        for column in cover_columns:
+
+            if column in rebalancing_view.columns:
+
+                rebalancing_view[column] = (
+                    rebalancing_view[column]
+                    .apply(format_cover)
+                )
+
+        # ----------------------------------------------------
+        # Format price
+        # ----------------------------------------------------
+
+        if "Price" in rebalancing_view.columns:
+
+            rebalancing_view["Price"] = (
+                rebalancing_view["Price"]
+                .apply(
+                    lambda x: f"₹{x:,.2f}"
+                )
+            )
+
+        # ----------------------------------------------------
+        # Format shares
+        # ----------------------------------------------------
+
+        share_columns = [
+            "Current Shares",
+            "Shares To Release",
+            "Shares To Add",
+            "Recommended Shares"
+        ]
+
+        for column in share_columns:
+
+            if column in rebalancing_view.columns:
+
+                rebalancing_view[column] = (
+                    rebalancing_view[column]
+                    .apply(
+                        lambda x: f"{int(x):,}"
+                    )
+                )
+
+        # ----------------------------------------------------
+        # Select useful dashboard columns
+        # ----------------------------------------------------
+
+        rebalancing_columns = [
+
+            "Trading Date",
+            "Borrower",
+            "Security",
+            "Price",
+
+            "Current Shares",
+
+            "Current Collateral",
+            "Loan Amount",
+
+            "Current Cover",
+
+            "Excess Collateral",
+            "Shortfall Collateral",
+
+            "Shares To Release",
+            "Release Value",
+
+            "Shares To Add",
+            "Additional Collateral",
+
+            "Recommended Shares",
+            "Recommended Collateral",
+
+            "Cover After Action",
+
+            "Action",
+            "Action Reason"
+        ]
+
+        available_rebalancing_columns = [
+            column
+            for column in rebalancing_columns
+            if column in rebalancing_view.columns
+        ]
+
+        rebalancing_view = rebalancing_view[
+            available_rebalancing_columns
+        ]
+
+        # ----------------------------------------------------
+        # Display
+        # ----------------------------------------------------
+
+        st.dataframe(
+            rebalancing_view,
+            width="stretch",
+            hide_index=True
+        )
+
+    else:
+
+        st.info(
+            "No collateral rebalancing recommendation "
+            "available."
+        )
+
+except Exception as e:
+
+    st.warning(
+        "Collateral rebalancing could not be calculated: "
+        + str(e)
+    )
+
+
+# ============================================================
+# 8. COMPLETE HISTORICAL DATA
 # ============================================================
 
 st.subheader("📚 View Complete Historical Data")
@@ -589,6 +761,305 @@ st.dataframe(
     width="stretch",
     hide_index=True
 )
+
+# ============================================================
+# 8. COLLATERAL RELEASE REQUEST
+# ============================================================
+
+st.subheader("🔓 Collateral Release Request")
+
+st.caption(
+    "Check whether a borrower can release a requested number "
+    "of pledged shares while maintaining the required "
+    "borrower-level collateral cover."
+)
+
+# ------------------------------------------------------------
+# Borrower selection
+# ------------------------------------------------------------
+
+borrower_options = sorted(
+    df["borrower"]
+    .dropna()
+    .unique()
+    .tolist()
+)
+
+if borrower_options:
+
+    selected_borrower = st.selectbox(
+        "Borrower",
+        borrower_options,
+        key="release_borrower"
+    )
+
+    borrower_securities = sorted(
+        df.loc[
+            df["borrower"] == selected_borrower,
+            "security"
+        ]
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    if borrower_securities:
+
+        selected_security = st.selectbox(
+            "Security",
+            borrower_securities,
+            key="release_security"
+        )
+
+        security_rows = df[
+            (df["borrower"] == selected_borrower)
+            & (df["security"] == selected_security)
+        ].copy()
+
+        # ----------------------------------------------------
+        # Use latest trading-date record
+        # ----------------------------------------------------
+
+        if not security_rows.empty:
+
+            security_rows["date"] = pd.to_datetime(
+                security_rows["date"],
+                errors="coerce"
+            )
+
+            latest_security_date = (
+                security_rows["date"].max()
+            )
+
+            security_row = security_rows[
+                security_rows["date"]
+                == latest_security_date
+            ].iloc[-1]
+
+            current_shares = int(
+                security_row["shares"]
+            )
+
+            current_price = float(
+                security_row["price"]
+            )
+
+            # ------------------------------------------------
+            # Requested shares
+            # ------------------------------------------------
+
+            requested_release = st.number_input(
+                "Shares Requested for Release",
+                min_value=0,
+                max_value=current_shares,
+                value=0,
+                step=1000,
+                format="%d",
+                key="release_requested_shares"
+            )
+
+            # ------------------------------------------------
+            # Calculate release request
+            # ------------------------------------------------
+
+            if requested_release > 0:
+
+                try:
+
+                    release_result = (
+                        calculate_release_request(
+                            df.copy(),
+                            selected_borrower,
+                            selected_security,
+                            int(requested_release)
+                        )
+                    )
+
+                    # ----------------------------------------
+                    # Summary
+                    # ----------------------------------------
+
+                    st.markdown("### Release Assessment")
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+
+                        st.metric(
+                            "Current Shares",
+                            f"{current_shares:,}"
+                        )
+
+                    with col2:
+
+                        st.metric(
+                            "Requested Release",
+                            f"{int(requested_release):,}"
+                        )
+
+                    with col3:
+
+                        st.metric(
+                            "Release Value",
+                            format_crore(
+                                release_result[
+                                    "Release Value"
+                                ]
+                            )
+                        )
+
+                    with col4:
+
+                        st.metric(
+                            "Current Cover",
+                            format_cover(
+                                release_result[
+                                    "Current Cover"
+                                ]
+                            )
+                        )
+
+                    # ----------------------------------------
+                    # Post-release cover
+                    # ----------------------------------------
+
+                    col5, col6, col7 = st.columns(3)
+
+                    with col5:
+
+                        st.metric(
+                            "Collateral After Release",
+                            format_crore(
+                                release_result[
+                                    "Collateral After Release"
+                                ]
+                            )
+                        )
+
+                    with col6:
+
+                        st.metric(
+                            "Cover After Release",
+                            format_cover(
+                                release_result[
+                                    "Cover After Release"
+                                ]
+                            )
+                        )
+
+                    with col7:
+
+                        st.metric(
+                            "Maximum Safe Release",
+                            f"{int(release_result['Maximum Safe Release Shares']):,}"
+                        )
+
+                    # ----------------------------------------
+                    # Decision
+                    # ----------------------------------------
+
+                    if (
+                        release_result["Status"]
+                        == "APPROVED"
+                    ):
+
+                        st.success(
+                            "🟢 RELEASE APPROVED"
+                        )
+
+                    else:
+
+                        st.error(
+                            "🔴 RELEASE REJECTED"
+                        )
+
+                    st.info(
+                        release_result["Message"]
+                    )
+
+                    # ----------------------------------------
+                    # Detailed result
+                    # ----------------------------------------
+
+                    release_display = pd.DataFrame(
+                        [
+                            {
+                                "Borrower":
+                                    release_result["Borrower"],
+
+                                "Security":
+                                    release_result["Security"],
+
+                                "Current Shares":
+                                    f"{int(release_result['Current Shares']):,}",
+
+                                "Requested Release":
+                                    f"{int(release_result['Requested Shares']):,}",
+
+                                "Release Value":
+                                    format_crore(
+                                        release_result[
+                                            "Release Value"
+                                        ]
+                                    ),
+
+                                "Current Cover":
+                                    format_cover(
+                                        release_result[
+                                            "Current Cover"
+                                        ]
+                                    ),
+
+                                "Cover After Release":
+                                    format_cover(
+                                        release_result[
+                                            "Cover After Release"
+                                        ]
+                                    ),
+
+                                "Maximum Safe Release":
+                                    f"{int(release_result['Maximum Safe Release Shares']):,}",
+
+                                "Status":
+                                    release_result["Status"]
+                            }
+                        ]
+                    )
+
+                    st.dataframe(
+                        release_display,
+                        width="stretch",
+                        hide_index=True
+                    )
+
+                except Exception as e:
+
+                    st.error(
+                        "Release request could not be calculated: "
+                        + str(e)
+                    )
+
+            else:
+
+                st.info(
+                    "Enter the number of shares requested "
+                    "for release to calculate eligibility."
+                )
+
+        else:
+
+            st.warning(
+                "No current security data available."
+            )
+
+else:
+
+    st.info(
+        "No borrower data available."
+    )
+
+
+
 
 
 # ============================================================
