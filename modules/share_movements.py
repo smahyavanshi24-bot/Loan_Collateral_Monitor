@@ -1,9 +1,15 @@
 import sqlite3
 import os
+import sqlite3
 import pandas as pd
 
 
+BASE_DIR = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
+)
+
 DATABASE_FILE = os.path.join(
+    BASE_DIR,
     "database",
     "collateral.db"
 )

@@ -24,7 +24,7 @@ from modules.share_movements import (
 
 st.set_page_config(
     page_title="Loan Collateral Risk Dashboard",
-    page_icon="ðŸ“Š",
+    page_icon="📊",
     layout="wide",
 )
 
@@ -42,7 +42,7 @@ initialize_share_movements()
 # HEADER
 # ============================================================
 
-st.title("ðŸ“Š Loan Collateral Risk Monitoring System")
+st.title("📊 Loan Collateral Risk Monitoring System")
 
 st.caption(
     "Credit Risk Dashboard | Collateral & Security Cover Monitoring"
@@ -195,7 +195,7 @@ if "date" in market_df.columns:
 # 1. BORROWER RISK SUMMARY
 # ============================================================
 
-st.subheader("ðŸ‘¥ Borrower Risk Summary")
+st.subheader("👥 Borrower Risk Summary")
 
 
 borrower_risk = borrower_summary(
@@ -279,7 +279,7 @@ st.dataframe(
 # LATEST TRADING DATE ONLY
 # ============================================================
 
-st.subheader("ðŸš¦ Security Risk Monitoring")
+st.subheader("🚦 Security Risk Monitoring")
 
 
 security_columns = [
@@ -364,12 +364,12 @@ st.caption(
 # 3. IMMEDIATE ATTENTION REQUIRED
 # ============================================================
 
-st.subheader("ðŸš¨ Immediate Attention Required")
+st.subheader("🚨 Immediate Attention Required")
 
 
 critical = risk_df[
     risk_df["risk_status"].astype(str)
-    == "ðŸ”´ Action Required"
+    == "🔴 Action Required"
 ].copy()
 
 
@@ -462,7 +462,7 @@ else:
 # LATEST TRADING DATE ONLY
 # ============================================================
 
-st.subheader("ðŸ“‰ Market Movement Monitoring")
+st.subheader("📉 Market Movement Monitoring")
 
 
 market_columns = [
@@ -516,7 +516,7 @@ st.dataframe(
 # 5. COLLATERAL STRESS TESTING
 # ============================================================
 
-st.subheader("ðŸ“‰ Collateral Stress Testing")
+st.subheader("📉 Collateral Stress Testing")
 
 
 try:
@@ -614,7 +614,7 @@ except Exception as e:
 
 st.divider()
 
-st.subheader("ðŸ“Š Share Movement Tracking")
+st.subheader("📊 Share Movement Tracking")
 
 
 st.caption(
@@ -823,7 +823,7 @@ if not movement_df.empty:
 
     movement_view["Movement Date"] = (
         movement_view["Movement Date"]
-        .fillna("â€”")
+        .fillna("—")
     )
 
 
@@ -875,13 +875,13 @@ if not movement_df.empty:
 
                 if numeric_value < 0:
 
-                    return f"âˆ’{abs(numeric_value):,}"
+                    return f"−{abs(numeric_value):,}"
 
-                return "â€”"
+                return "—"
 
             except Exception:
 
-                return "â€”"
+                return "—"
 
 
         movement_view["Movement Shares"] = (
@@ -921,7 +921,7 @@ else:
 # ADD FUTURE SHARE MOVEMENT
 # ============================================================
 
-st.subheader("âž• Record Future Share Movement")
+st.subheader("➕ Record Future Share Movement")
 
 
 st.caption(
@@ -1082,7 +1082,7 @@ if borrowers:
                 - int(movement_quantity)
             )
 
-            movement_symbol = "âˆ’"
+            movement_symbol = "−"
 
 
         if resulting_shares < 0:
@@ -1120,7 +1120,7 @@ if borrowers:
             # ------------------------------------------------
 
             if st.button(
-                "ðŸ’¾ Save Share Movement",
+                "💾 Save Share Movement",
                 type="primary",
                 key="save_share_movement",
             ):
@@ -1185,7 +1185,7 @@ if borrowers:
 
 st.divider()
 
-st.subheader("ðŸ“š Complete Historical Data")
+st.subheader("📚 Complete Historical Data")
 
 
 historical_view = df.copy()
@@ -1245,9 +1245,9 @@ if "price" in historical_view.columns:
         )
         .map(
             lambda x:
-            f"â‚¹{x:,.2f}"
+            f"₹{x:,.2f}"
             if pd.notna(x)
-            else "â€”"
+            else "—"
         )
     )
 
@@ -1308,7 +1308,7 @@ st.dataframe(
 # 8. HISTORICAL BORROWER COVER MOVEMENT
 # ============================================================
 
-st.subheader("ðŸ“ˆ Historical Borrower Cover Movement")
+st.subheader("📈 Historical Borrower Cover Movement")
 
 
 cover_history = df.copy()
