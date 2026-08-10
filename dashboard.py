@@ -8,8 +8,6 @@ from modules.risk_analysis import calculate_risk
 from modules.market_monitor import add_market_monitoring
 from modules.borrower_summary import borrower_summary
 from modules.stress_test import run_stress_test
-from modules.margin_call import calculate_margin_call
-from modules.risk_alert_engine import generate_risk_alerts
 from modules.formatting import format_crore, format_cover
 
 
@@ -431,137 +429,7 @@ st.dataframe(
     width="stretch",
     hide_index=True
 )
-
-# ============================================================
-# 5. CONSOLIDATED RISK ALERTS
-# ============================================================
-
-st.subheader("🚨 Consolidated Risk Alerts")
-
-try:
-
-    alert_df = generate_risk_alerts(
-        risk_df.copy(),
-        market_df.copy()
-    )
-
-    if alert_df is not None and not alert_df.empty:
-
-        alert_columns = [
-            "date",
-            "borrower",
-            "security",
-            "price",
-            "cover",
-            "required_cover",
-            "buffer",
-            "alert_level",
-            "alert_reason",
-            "action_required"
-        ]
-
-        available_alert_columns = [
-            column
-            for column in alert_columns
-            if column in alert_df.columns
-        ]
-
-        alert_view = alert_df[
-            available_alert_columns
-        ].copy()
-
-        # ----------------------------------------------------
-        # Show only latest trading date
-        # ----------------------------------------------------
-
-        if "date" in alert_view.columns:
-
-            alert_view = alert_view[
-                alert_view["date"]
-                == latest_trading_date
-            ].copy()
-
-            alert_view["date"] = (
-                alert_view["date"]
-                .dt.strftime("%d-%b-%Y")
-            )
-
-        # ----------------------------------------------------
-        # Critical alerts
-        # ----------------------------------------------------
-
-        critical_alerts = alert_view[
-            alert_view["alert_level"]
-            == "🔴 Critical"
-        ]
-
-        if not critical_alerts.empty:
-
-            st.error(
-                f"⚠️ {len(critical_alerts)} "
-                "critical risk alert(s) detected."
-            )
-
-        # ----------------------------------------------------
-        # Warning alerts
-        # ----------------------------------------------------
-
-        warning_alerts = alert_view[
-            alert_view["alert_level"]
-            == "🟠 Warning"
-        ]
-
-        if not warning_alerts.empty:
-
-            st.warning(
-                f"⚠️ {len(warning_alerts)} "
-                "warning(s) require monitoring."
-            )
-
-        # ----------------------------------------------------
-        # No alerts
-        # ----------------------------------------------------
-
-        if (
-            critical_alerts.empty
-            and warning_alerts.empty
-        ):
-
-            st.success(
-                "🟢 No critical or warning risk alerts "
-                "for the latest trading date."
-            )
-
-        # ----------------------------------------------------
-        # Display alerts
-        # ----------------------------------------------------
-
-        st.dataframe(
-            alert_view,
-            width="stretch",
-            hide_index=True
-        )
-
-    else:
-
-        st.info(
-            "No consolidated risk alert data available."
-        )
-
-except Exception as e:
-
-    st.warning(
-        "Risk alert engine could not be calculated: "
-        + str(e)
-    )
-    
-# ============================================================
-# 5. COLLATERAL STRESS TESTING
-# ============================================================
-
-st.subheader("📉 Collateral Stress Testing")
-
-
+   
 # ============================================================
 # 5. COLLATERAL STRESS TESTING
 # ============================================================
@@ -635,85 +503,13 @@ except Exception as e:
         + str(e)
     )
 
-
-# ============================================================
-# 6. MARGIN CALL MONITORING
-# ============================================================
-
-# ============================================================
-# 6. MARGIN CALL MONITORING
-# ============================================================
-
-st.subheader("💰 Margin Call Monitoring")
-
-
-try:
-
-    margin_df = calculate_margin_call(
-        df.copy()
-    )
-
-
-    if margin_df is not None and not margin_df.empty:
-
-        st.dataframe(
-            margin_df,
-            width="stretch",
-            hide_index=True
-        )
-
-
-        if "margin_call_status" in margin_df.columns:
-
-            margin_required = margin_df[
-                margin_df[
-                    "margin_call_status"
-                ].astype(str).str.contains(
-                    "MARGIN CALL REQUIRED",
-                    case=False,
-                    na=False
-                )
-            ]
-
-
-            if not margin_required.empty:
-
-                st.error(
-                    f"⚠️ {len(margin_required)} "
-                    "margin call(s) required"
-                )
-
-            else:
-
-                st.success(
-                    "No margin call required."
-                )
-
-
-    else:
-
-        st.info(
-            "No margin-call data available."
-        )
-
-
-except Exception as e:
-
-    st.warning(
-        "Margin-call calculation could not be completed: "
-        + str(e)
-    )
-
-
 # ============================================================
 # 7. COMPLETE HISTORICAL DATA
 # ============================================================
 
 st.subheader("📚 View Complete Historical Data")
 
-
 historical_view = df.copy()
-
 
 historical_columns = [
     "date",
@@ -728,13 +524,11 @@ historical_columns = [
     "status"
 ]
 
-
 available_historical_columns = [
     column
     for column in historical_columns
     if column in historical_view.columns
 ]
-
 
 historical_view = historical_view[
     available_historical_columns
@@ -743,6 +537,9 @@ historical_view = historical_view[
     ascending=[False, True, True]
 )
 
+# ------------------------------------------------------------
+# Format date
+# ------------------------------------------------------------
 
 if "date" in historical_view.columns:
 
@@ -751,6 +548,41 @@ if "date" in historical_view.columns:
         .dt.strftime("%d-%b-%Y")
     )
 
+# ------------------------------------------------------------
+# Convert financial amounts to ₹ Crore
+# ------------------------------------------------------------
+
+if "loan_amount" in historical_view.columns:
+
+    historical_view["loan_amount"] = (
+        historical_view["loan_amount"]
+        .apply(format_crore)
+    )
+
+if "collateral_value" in historical_view.columns:
+
+    historical_view["collateral_value"] = (
+        historical_view["collateral_value"]
+        .apply(format_crore)
+    )
+
+# ------------------------------------------------------------
+# Format cover ratios
+# ------------------------------------------------------------
+
+if "cover" in historical_view.columns:
+
+    historical_view["cover"] = (
+        historical_view["cover"]
+        .apply(format_cover)
+    )
+
+if "required_cover" in historical_view.columns:
+
+    historical_view["required_cover"] = (
+        historical_view["required_cover"]
+        .apply(format_cover)
+    )
 
 st.dataframe(
     historical_view,
