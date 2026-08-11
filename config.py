@@ -97,8 +97,11 @@ WHATSAPP_PHONE_ID = (
 # The previous token you pasted into this chat should
 # be revoked/rotated because it has been exposed.
 
-WHATSAPP_ACCESS_TOKEN = (
-    "EAArFnYOyg90BSFzxwvIS1hZAGRlKHaSUBGhqiEfEUfo0Yn8eUTmZCiYXo8C0QvZAyKA5DSZB0ZCSJ68SlmhCuLY6KETDizzLgZAwGphEhoxtpvj0BzHktDCLS61F2c2wf1TGsWPXQEj2OOOMN1bvSgehsxxCAzIsdJqCJUApT9MEOGwZCz2h0KQ8k3I9waPhUDG0opRZB1qQmaCZBarLj4nzMYv6ulZB0yZCKe3bAOtpdD2cCBQqUoFbXjyLlavns5ek6SGeAqnmVFj0ZBIrE0wvS3QJ6OgU"
+import os
+
+WHATSAPP_ACCESS_TOKEN = os.getenv(
+    "WHATSAPP_ACCESS_TOKEN",
+    ""
 )
 
 
