@@ -4,4 +4,5 @@ requests
 schedule
 beautifulsoup4
 lxml
-yfinancexlsxwriter
+yfinance
+xlsxwriter
