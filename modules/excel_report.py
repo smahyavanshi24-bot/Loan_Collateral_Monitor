@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import xlsxwriter
 
@@ -111,7 +112,9 @@ def generate_excel_report(df, filename):
 
     summary.write(
         "B3",
-        datetime.now().strftime(
+        datetime.now(
+            ZoneInfo("Asia/Kolkata")
+            ).strftime(
             "%d-%b-%Y"
         )
     )

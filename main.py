@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import os
 import sqlite3
 import pandas as pd
@@ -235,7 +236,7 @@ def main():
     # CURRENT DATE / TIME
     # --------------------------------------------------------
 
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
 
     # --------------------------------------------------------
     # WEEKEND CHECK
@@ -753,7 +754,9 @@ def main():
             new_records
         )
 
-        report_date = datetime.now().strftime(
+        report_date = datetime.now(
+            ZoneInfo("Asia/Kolkata")
+            ).strftime(
             "%Y-%m-%d"
         )
 

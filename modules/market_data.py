@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 
+import sys
+import pandas as pd
 import yfinance as yf
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -50,6 +54,200 @@ def get_stock_data(stock_name):
     - Never returns zero as a valid price.
     - Raises an exception if valid price data is unavailable.
     """
+
+    # ============================================================
+# GET LIVE INTRADAY STOCK DATA
+# ============================================================
+
+def get_live_stock_data(stock_name):
+    """
+    Fetch latest intraday market price for an NSE-listed stock.
+
+    Uses Yahoo Finance 1-minute intraday data.
+
+    This function is ONLY for live dashboard monitoring.
+    It does NOT modify the historical database.
+    """
+
+    if stock_name not in SYMBOLS:
+        raise Exception(
+            f"Symbol not configured for {stock_name}"
+        )
+
+    symbol = SYMBOLS[stock_name]
+
+    print(
+        f"Fetching LIVE NSE price for "
+        f"{stock_name} ({symbol})..."
+    )
+
+    try:
+
+        stock = yf.Ticker(symbol)
+
+        # ----------------------------------------------------
+        # LIVE / INTRADAY DATA
+        # ----------------------------------------------------
+
+        intraday = stock.history(
+            period="1d",
+            interval="1m",
+            auto_adjust=False,
+            prepost=False
+        )
+
+        if intraday is None or intraday.empty:
+            raise Exception(
+                f"No intraday data received for "
+                f"{stock_name}"
+            )
+
+        # ----------------------------------------------------
+        # VALID CLOSE VALUES
+        # ----------------------------------------------------
+
+        prices = (
+            pd.to_numeric(
+                intraday["Close"],
+                errors="coerce"
+            )
+            .dropna()
+        )
+
+        prices = prices[
+            prices > 0
+        ]
+
+        if prices.empty:
+            raise Exception(
+                f"No valid live price received for "
+                f"{stock_name}"
+            )
+
+        # ----------------------------------------------------
+        # LATEST INTRADAY PRICE
+        # ----------------------------------------------------
+
+        live_price = float(
+            prices.iloc[-1]
+        )
+
+        # ----------------------------------------------------
+        # PREVIOUS TRADING DAY CLOSE
+        # ----------------------------------------------------
+
+        daily_data = stock.history(
+            period="5d",
+            interval="1d",
+            auto_adjust=False,
+            prepost=False
+        )
+
+        previous_close = None
+
+        if (
+            daily_data is not None
+            and not daily_data.empty
+        ):
+
+            daily_closes = (
+                pd.to_numeric(
+                    daily_data["Close"],
+                    errors="coerce"
+                )
+                .dropna()
+            )
+
+            if len(daily_closes) >= 2:
+                previous_close = float(
+                    daily_closes.iloc[-2]
+                )
+
+        # ----------------------------------------------------
+        # LIVE DAILY CHANGE
+        # ----------------------------------------------------
+
+        daily_change = None
+
+        if (
+            previous_close is not None
+            and previous_close > 0
+        ):
+
+            daily_change = (
+                (
+                    live_price
+                    - previous_close
+                )
+                / previous_close
+            ) * 100
+
+        # ----------------------------------------------------
+        # LAST MARKET DATA TIMESTAMP
+        # ----------------------------------------------------
+
+        last_timestamp = intraday.index[-1]
+
+        # Convert to India time
+        try:
+
+            if last_timestamp.tzinfo is None:
+                last_timestamp = last_timestamp.tz_localize(
+                    "Asia/Kolkata"
+                )
+            else:
+                last_timestamp = last_timestamp.tz_convert(
+                    "Asia/Kolkata"
+                )
+
+        except Exception:
+            pass
+
+        # ----------------------------------------------------
+        # RETURN
+        # ----------------------------------------------------
+
+        return {
+            "price": round(
+                live_price,
+                2
+            ),
+
+            "previous_close": (
+                round(
+                    previous_close,
+                    2
+                )
+                if previous_close is not None
+                else None
+            ),
+
+            "daily_change_%": (
+                round(
+                    daily_change,
+                    2
+                )
+                if daily_change is not None
+                else None
+            ),
+
+            "timestamp": last_timestamp,
+
+            "source": "Yahoo Finance Intraday"
+        }
+
+    except Exception as e:
+
+        print(
+            f"❌ Live market data error for "
+            f"{stock_name}: {e}"
+        )
+
+        raise Exception(
+            f"Live NSE market data unavailable "
+            f"for {stock_name}"
+        ) from e
+
 
 
     # ========================================================
@@ -492,3 +690,119 @@ def get_lower_circuit(stock_name):
             "⚪ Circuit Data Not Available"
 
     }
+
+# ============================================================
+# GET LIVE INTRADAY STOCK DATA
+# ============================================================
+
+def get_live_stock_data(stock_name):
+    """
+    Fetch the latest intraday price for the dashboard.
+    This does NOT modify the historical database.
+    """
+
+    if stock_name not in SYMBOLS:
+        raise Exception(
+            f"Symbol not configured for {stock_name}"
+        )
+
+    symbol = SYMBOLS[stock_name]
+
+    print(
+        f"Fetching LIVE NSE price for "
+        f"{stock_name} ({symbol})..."
+    )
+
+    try:
+
+        stock = yf.Ticker(symbol)
+
+        intraday = stock.history(
+            period="1d",
+            interval="1m",
+            auto_adjust=False,
+            prepost=False
+        )
+
+        if intraday is None or intraday.empty:
+            raise Exception(
+                f"No intraday data received for {stock_name}"
+            )
+
+        prices = (
+            pd.to_numeric(
+                intraday["Close"],
+                errors="coerce"
+            )
+            .dropna()
+        )
+
+        prices = prices[prices > 0]
+
+        if prices.empty:
+            raise Exception(
+                f"No valid live price received for {stock_name}"
+            )
+
+        live_price = float(prices.iloc[-1])
+
+        # Previous trading-day close
+        daily_data = stock.history(
+            period="5d",
+            interval="1d",
+            auto_adjust=False,
+            prepost=False
+        )
+
+        previous_close = None
+
+        if daily_data is not None and not daily_data.empty:
+
+            daily_closes = (
+                pd.to_numeric(
+                    daily_data["Close"],
+                    errors="coerce"
+                )
+                .dropna()
+            )
+
+            if len(daily_closes) >= 2:
+                previous_close = float(
+                    daily_closes.iloc[-2]
+                )
+
+        daily_change = None
+
+        if previous_close and previous_close > 0:
+
+            daily_change = (
+                (live_price - previous_close)
+                / previous_close
+            ) * 100
+
+        return {
+            "price": round(live_price, 2),
+            "previous_close": (
+                round(previous_close, 2)
+                if previous_close is not None
+                else None
+            ),
+            "daily_change_%": (
+                round(daily_change, 2)
+                if daily_change is not None
+                else None
+            ),
+            "source": "Yahoo Finance Intraday"
+        }
+
+    except Exception as e:
+
+        print(
+            f"❌ Live market data error for "
+            f"{stock_name}: {e}"
+        )
+
+        raise Exception(
+            f"Live market data unavailable "
+            f"for {stock_name}"
+        ) from e

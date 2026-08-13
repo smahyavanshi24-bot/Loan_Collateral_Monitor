@@ -13,6 +13,7 @@
 # ============================================================
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import requests
 
 from config import (
@@ -88,7 +89,9 @@ def generate_daily_summary(records):
 
         return None
 
-    date = datetime.now().strftime(
+    date = datetime.now(
+        ZoneInfo("Asia/Kolkata")
+        ).strftime(
         "%d-%b-%Y"
     )
 
