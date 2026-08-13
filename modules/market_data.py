@@ -55,6 +55,293 @@ def get_stock_data(stock_name):
     - Raises an exception if valid price data is unavailable.
     """
 
+    # ========================================================
+    # CHECK SYMBOL
+    # ========================================================
+
+    if stock_name not in SYMBOLS:
+
+        raise Exception(
+            f"Symbol not configured for {stock_name}"
+        )
+
+
+    symbol = SYMBOLS[stock_name]
+
+
+    print(
+        f"Fetching NSE price for "
+        f"{stock_name} ({symbol})..."
+    )
+
+
+    # ========================================================
+    # FETCH DATA
+    # ========================================================
+
+    try:
+
+        stock = yf.Ticker(
+            symbol
+        )
+
+
+        data = stock.history(
+            period="1y",
+            interval="1d",
+            auto_adjust=False
+        )
+
+
+        # ====================================================
+        # CHECK DATA
+        # ====================================================
+
+        if data is None or data.empty:
+
+            raise Exception(
+                f"No market data received for "
+                f"{stock_name}"
+            )
+
+
+        # ====================================================
+        # CLOSE PRICES
+        # ====================================================
+
+        close_prices = (
+            pd_series_numeric(
+                data["Close"]
+            )
+            .dropna()
+        )
+
+
+        if close_prices.empty:
+
+            raise Exception(
+                f"No valid closing prices received "
+                f"for {stock_name}"
+            )
+
+
+        # ====================================================
+        # LATEST PRICE
+        # ====================================================
+
+        latest_price = float(
+            close_prices.iloc[-1]
+        )
+
+
+        if latest_price <= 0:
+
+            raise Exception(
+                f"Invalid latest price "
+                f"{latest_price} for {stock_name}"
+            )
+
+
+        # ====================================================
+        # PREVIOUS CLOSE
+        # ====================================================
+
+        if len(close_prices) >= 2:
+
+            previous_close = float(
+                close_prices.iloc[-2]
+            )
+
+        else:
+
+            previous_close = None
+
+
+        # ====================================================
+        # DAILY CHANGE
+        # ====================================================
+
+        if (
+            previous_close is not None
+            and previous_close > 0
+        ):
+
+            daily_change = (
+                (
+                    latest_price
+                    -
+                    previous_close
+                )
+                /
+                previous_close
+            ) * 100
+
+        else:
+
+            daily_change = None
+
+
+        # ====================================================
+        # 52 WEEK LOW
+        # ====================================================
+
+        week_52_low = float(
+            close_prices.min()
+        )
+
+
+        if week_52_low <= 0:
+
+            week_52_low = None
+
+
+        # ====================================================
+        # DISTANCE FROM 52 WEEK LOW
+        # ====================================================
+
+        if (
+            week_52_low is not None
+            and week_52_low > 0
+        ):
+
+            distance_from_low = (
+                (
+                    latest_price
+                    -
+                    week_52_low
+                )
+                /
+                week_52_low
+            ) * 100
+
+        else:
+
+            distance_from_low = None
+
+
+        # ====================================================
+        # ROUND VALUES
+        # ====================================================
+
+        latest_price = round(
+            latest_price,
+            2
+        )
+
+
+        if previous_close is not None:
+
+            previous_close = round(
+                previous_close,
+                2
+            )
+
+
+        if daily_change is not None:
+
+            daily_change = round(
+                daily_change,
+                2
+            )
+
+
+        if week_52_low is not None:
+
+            week_52_low = round(
+                week_52_low,
+                2
+            )
+
+
+        if distance_from_low is not None:
+
+            distance_from_low = round(
+                distance_from_low,
+                2
+            )
+
+
+        # ====================================================
+        # DISPLAY
+        # ====================================================
+
+        print(
+            f"NSE price received: "
+            f"{stock_name} = ₹{latest_price:.2f}"
+        )
+
+
+        if previous_close is not None:
+
+            print(
+                f"Previous Close : "
+                f"₹{previous_close:.2f}"
+            )
+
+
+        if daily_change is not None:
+
+            print(
+                f"Daily Change : "
+                f"{daily_change:.2f}%"
+            )
+
+
+        if week_52_low is not None:
+
+            print(
+                f"52 Week Low : "
+                f"₹{week_52_low:.2f}"
+            )
+
+
+        # ====================================================
+        # RETURN DATA
+        # ====================================================
+
+        return {
+
+            "price":
+                latest_price,
+
+            "previous_close":
+                previous_close,
+
+            "daily_change_%":
+                daily_change,
+
+            "52_week_low":
+                week_52_low,
+
+            "distance_from_52_week_low_%":
+                distance_from_low
+
+        }
+
+
+    # ========================================================
+    # ERROR
+    # ========================================================
+
+    except Exception as e:
+
+        print()
+
+        print(
+            f"❌ Market data error for "
+            f"{stock_name}: {e}"
+        )
+
+
+        raise Exception(
+            f"Valid NSE market data unavailable "
+            f"for {stock_name}"
+        ) from e
+
+
+
+
+
     # ============================================================
 # GET LIVE INTRADAY STOCK DATA
 # ============================================================
