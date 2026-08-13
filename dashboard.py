@@ -43,6 +43,18 @@ st_autorefresh(
     key="live_market_refresh"
 )
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+refresh_time = datetime.now(
+    ZoneInfo("Asia/Kolkata")
+)
+
+st.caption(
+    f"🔄 Dashboard refreshed: "
+    f"{refresh_time.strftime('%d-%b-%Y %H:%M:%S')} IST"
+)
+
 
 # ============================================================
 # INITIALIZE SHARE MOVEMENT SYSTEM
@@ -114,6 +126,11 @@ for item in LIVE_SECURITIES:
 
         live_price = market_data["price"]
 
+        last_updated = market_data.get(
+            "last_updated",
+            "Unavailable"
+        )
+
         live_collateral_cr = (
             live_price
             * item["shares"]
@@ -141,6 +158,7 @@ for item in LIVE_SECURITIES:
                 "Borrower": item["borrower"],
                 "Security": item["security"],
                 "Live Price": live_price,
+                "Market Data Time": last_updated,
                 "Shares": item["shares"],
                 "Live Collateral (Cr)": live_collateral_cr,
                 "Live Cover": live_cover,

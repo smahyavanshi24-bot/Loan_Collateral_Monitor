@@ -456,16 +456,10 @@ def get_live_stock_data(stock_name):
 
         daily_change = None
 
-        if (
-            previous_close is not None
-            and previous_close > 0
-        ):
-
+        if previous_close and previous_close > 0:
+                  
             daily_change = (
-                (
-                    live_price
-                    - previous_close
-                )
+                (live_price- previous_close)
                 / previous_close
             ) * 100
 
@@ -473,6 +467,7 @@ def get_live_stock_data(stock_name):
         # LAST MARKET DATA TIMESTAMP
         # ----------------------------------------------------
 
+        
         last_timestamp = intraday.index[-1]
 
         # Convert to India time
@@ -490,38 +485,28 @@ def get_live_stock_data(stock_name):
         except Exception:
             pass
 
-        # ----------------------------------------------------
-        # RETURN
-        # ----------------------------------------------------
-
         return {
-            "price": round(
-                live_price,
-                2
-            ),
+        
+    "price": round(live_price, 2),
 
-            "previous_close": (
-                round(
-                    previous_close,
-                    2
-                )
-                if previous_close is not None
-                else None
-            ),
+    "previous_close": (
+        round(previous_close, 2)
+        if previous_close is not None
+        else None
+    ),
 
-            "daily_change_%": (
-                round(
-                    daily_change,
-                    2
-                )
-                if daily_change is not None
-                else None
-            ),
+    "daily_change_%": (
+        round(daily_change, 2)
+        if daily_change is not None
+        else None
+    ),
 
-            "timestamp": last_timestamp,
-
-            "source": "Yahoo Finance Intraday"
-        }
+   
+    "last_updated": last_timestamp.strftime(
+        "%d-%b-%Y %H:%M:%S"
+    ),
+    "source": "Yahoo Finance Intraday"
+}
 
     except Exception as e:
 
@@ -1067,6 +1052,24 @@ def get_live_stock_data(stock_name):
                 / previous_close
             ) * 100
 
+            # ----------------------------------------------------
+            # LAST MARKET DATA TIMESTAMP
+            # ----------------------------------------------------
+
+            last_timestamp = intraday.index[-1]
+
+            try:
+                if last_timestamp.tzinfo is None:
+                    last_timestamp = last_timestamp.tz_localize(
+                        "Asia/Kolkata"
+                        )
+                else:
+                    last_timestamp = last_timestamp.tz_convert(
+            "Asia/Kolkata"
+            )
+            except Exception:
+                pass
+
         return {
             "price": round(live_price, 2),
             "previous_close": (
@@ -1078,6 +1081,9 @@ def get_live_stock_data(stock_name):
                 round(daily_change, 2)
                 if daily_change is not None
                 else None
+            ),
+            "last_updated": last_timestamp.strftime(
+                "%d-%b-%Y %H:%M:%S"
             ),
             "source": "Yahoo Finance Intraday"
         }
