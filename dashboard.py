@@ -9,6 +9,9 @@ from modules.market_monitor import add_market_monitoring
 from modules.borrower_summary import borrower_summary
 from modules.stress_test import run_stress_test
 from modules.formatting import format_crore, format_cover
+from modules.market_monitor import add_market_monitoring
+from modules.market_data import get_live_stock_data
+from streamlit_autorefresh import st_autorefresh
 
 from modules.share_movements import (
     initialize_share_movements,
@@ -31,6 +34,15 @@ st.set_page_config(
 
 load_theme()
 
+# ============================================================
+# LIVE MARKET AUTO REFRESH
+# ============================================================
+
+st_autorefresh(
+    interval=60 * 1000,
+    key="live_market_refresh"
+)
+
 
 # ============================================================
 # INITIALIZE SHARE MOVEMENT SYSTEM
@@ -49,6 +61,169 @@ st.caption(
     "Credit Risk Dashboard | Collateral & Security Cover Monitoring"
 )
 
+# ============================================================
+# LIVE MARKET COLLATERAL MONITORING
+# ============================================================
+
+st.subheader("🔴 Live Market Collateral Position")
+
+st.caption(
+    "Live intraday prices. Historical database records are not modified."
+)
+
+LIVE_SECURITIES = [
+    {
+        "borrower": "Everbest",
+        "security": "JSW Energy",
+        "shares": 2_533_300,
+        "loan_amount": 120.00,
+        "required_cover": 1.00,
+    },
+    {
+        "borrower": "Everbest",
+        "security": "JSW Steel",
+        "shares": 1_096_000,
+        "loan_amount": 120.00,
+        "required_cover": 1.00,
+    },
+    {
+        "borrower": "Siddeshwari",
+        "security": "JSW Energy",
+        "shares": 9_200_000,
+        "loan_amount": 250.00,
+        "required_cover": 1.50,
+    },
+    {
+        "borrower": "Siddeshwari",
+        "security": "Jindal Steel & Power",
+        "shares": 1_600_000,
+        "loan_amount": 250.00,
+        "required_cover": 0.50,
+    },
+]
+
+live_rows = []
+
+for item in LIVE_SECURITIES:
+
+    try:
+
+        market_data = get_live_stock_data(
+            item["security"]
+        )
+
+        live_price = market_data["price"]
+
+        live_collateral_cr = (
+            live_price
+            * item["shares"]
+            / 10_000_000
+        )
+
+        live_cover = (
+            live_collateral_cr
+            / item["loan_amount"]
+        )
+
+        buffer = (
+            live_cover
+            - item["required_cover"]
+        )
+
+        status = (
+            "🟢 COMPLIED"
+            if live_cover >= item["required_cover"]
+            else "🔴 SHORTFALL"
+        )
+
+        live_rows.append(
+            {
+                "Borrower": item["borrower"],
+                "Security": item["security"],
+                "Live Price": live_price,
+                "Shares": item["shares"],
+                "Live Collateral (Cr)": live_collateral_cr,
+                "Live Cover": live_cover,
+                "Required Cover": item["required_cover"],
+                "Buffer": buffer,
+                "Status": status,
+            }
+        )
+
+    except Exception as e:
+
+        live_rows.append(
+            {
+                "Borrower": item["borrower"],
+                "Security": item["security"],
+                "Live Price": None,
+                "Shares": item["shares"],
+                "Live Collateral (Cr)": None,
+                "Live Cover": None,
+                "Required Cover": item["required_cover"],
+                "Buffer": None,
+                "Status": f"⚪ Price unavailable",
+            }
+        )
+
+live_df = pd.DataFrame(live_rows)
+
+# ============================================================
+# FORMAT LIVE VALUES FOR DISPLAY
+# ============================================================
+
+display_live_df = live_df.copy()
+
+display_live_df["Live Price"] = (
+    display_live_df["Live Price"]
+    .apply(
+        lambda x: f"₹{x:,.2f}"
+        if pd.notna(x)
+        else "Unavailable"
+    )
+)
+
+display_live_df["Live Collateral (Cr)"] = (
+    display_live_df["Live Collateral (Cr)"]
+    .apply(
+        lambda x: f"₹{x:,.2f} Cr"
+        if pd.notna(x)
+        else "Unavailable"
+    )
+)
+
+display_live_df["Live Cover"] = (
+    display_live_df["Live Cover"]
+    .apply(
+        lambda x: f"{x:.2f}x"
+        if pd.notna(x)
+        else "—"
+    )
+)
+
+display_live_df["Required Cover"] = (
+    display_live_df["Required Cover"]
+    .apply(
+        lambda x: f"{x:.2f}x"
+        if pd.notna(x)
+        else "—"
+    )
+)
+
+display_live_df["Buffer"] = (
+    display_live_df["Buffer"]
+    .apply(
+        lambda x: f"{x:+.2f}x"
+        if pd.notna(x)
+        else "—"
+    )
+)
+
+st.dataframe(
+    display_live_df,
+    use_container_width=True,
+    hide_index=True,
+)
 
 # ============================================================
 # LOAD HISTORICAL COLLATERAL DATA

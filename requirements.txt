@@ -7,3 +7,5 @@ lxml
 yfinance
 xlsxwriter
 reportlab
+streamlit
+streamlit-autorefresh
