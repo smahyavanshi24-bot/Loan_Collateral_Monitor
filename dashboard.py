@@ -1,6 +1,8 @@
 ﻿import streamlit as st
 import pandas as pd
 import altair as alt
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from modules.dashboard_theme import load_theme
 from modules.dashboard_data import get_collateral_history
@@ -74,10 +76,10 @@ st.caption(
 )
 
 # ============================================================
-# LIVE MARKET COLLATERAL MONITORING
+# LIVE MARKET COLLATERAL POSITION
 # ============================================================
 
-st.subheader("🔴 Live Market Collateral Position")
+st.subheader("🟢 Live Market Collateral Position")
 
 st.caption(
     "Live intraday prices. Historical database records are not modified."
@@ -114,6 +116,22 @@ LIVE_SECURITIES = [
     },
 ]
 
+
+# ------------------------------------------------------------
+# INDIA TRADING DATE
+# ------------------------------------------------------------
+
+live_trading_date = pd.Timestamp(
+    datetime.now(
+        ZoneInfo("Asia/Kolkata")
+    ).date()
+)
+
+
+# ------------------------------------------------------------
+# FETCH LIVE DATA ONCE PER SECURITY
+# ------------------------------------------------------------
+
 live_rows = []
 
 for item in LIVE_SECURITIES:
@@ -124,125 +142,284 @@ for item in LIVE_SECURITIES:
             item["security"]
         )
 
-        live_price = market_data["price"]
+        live_price = market_data.get("price")
+
+        previous_close = market_data.get(
+            "previous_close"
+        )
+
+        daily_change = market_data.get(
+            "daily_change_%"
+        )
 
         last_updated = market_data.get(
             "last_updated",
             "Unavailable"
         )
 
-        live_collateral_cr = (
+        week_52_low = market_data.get(
+            "52_week_low"
+        )
+
+        distance_from_low = market_data.get(
+            "distance_from_52_week_low_%"
+        )
+
+        if (
+            live_price is None
+            or live_price <= 0
+        ):
+
+            raise Exception(
+                "Invalid live price"
+            )
+
+
+        # ----------------------------------------------------
+        # LIVE COLLATERAL
+        # ----------------------------------------------------
+
+        collateral_cr = (
             live_price
             * item["shares"]
             / 10_000_000
         )
 
-        live_cover = (
-            live_collateral_cr
+
+        # ----------------------------------------------------
+        # LIVE COVER
+        # ----------------------------------------------------
+
+        cover = (
+            collateral_cr
             / item["loan_amount"]
         )
 
+
         buffer = (
-            live_cover
+            cover
             - item["required_cover"]
         )
 
-        status = (
-            "🟢 COMPLIED"
-            if live_cover >= item["required_cover"]
-            else "🔴 SHORTFALL"
-        )
+
+        # ----------------------------------------------------
+        # LIVE RISK STATUS
+        # ----------------------------------------------------
+
+        if cover >= item["required_cover"]:
+
+            risk_status = "🟢 Safe"
+
+        else:
+
+            risk_status = "🔴 Action Required"
+
+
+        # ----------------------------------------------------
+        # MARKET ALERT
+        # ----------------------------------------------------
+
+        market_alert = "🟢 Normal"
+
+        if (
+            daily_change is not None
+            and daily_change <= -5
+        ):
+
+            market_alert = "🔴 5%+ Fall"
+
+        elif (
+            daily_change is not None
+            and daily_change <= -3
+        ):
+
+            market_alert = "🟡 Sharp Fall"
+
+        elif (
+            daily_change is not None
+            and daily_change >= 5
+        ):
+
+            market_alert = "🟢 5%+ Rise"
+
+        elif (
+            daily_change is not None
+            and daily_change >= 3
+        ):
+
+            market_alert = "🟢 Strong Rise"
+
+
+        if (
+            distance_from_low is not None
+            and distance_from_low <= 5
+        ):
+
+            market_alert = "🔴 Near 52-Week Low"
+
+
+        # ----------------------------------------------------
+        # STORE LIVE ROW
+        # ----------------------------------------------------
 
         live_rows.append(
             {
-                "Borrower": item["borrower"],
-                "Security": item["security"],
-                "Live Price": live_price,
-                "Market Data Time": last_updated,
-                "Shares": item["shares"],
-                "Live Collateral (Cr)": live_collateral_cr,
-                "Live Cover": live_cover,
-                "Required Cover": item["required_cover"],
-                "Buffer": buffer,
-                "Status": status,
+                "date": live_trading_date,
+                "borrower": item["borrower"],
+                "security": item["security"],
+                "price": live_price,
+                "previous_close": previous_close,
+                "daily_change_%": daily_change,
+                "52_week_low": week_52_low,
+                "distance_from_52_week_low_%": distance_from_low,
+                "last_updated": last_updated,
+                "shares": item["shares"],
+                "loan_amount": item["loan_amount"],
+                "collateral_value": collateral_cr,
+                "cover": cover,
+                "required_cover": item["required_cover"],
+                "buffer": buffer,
+                "risk_status": risk_status,
+                "market_alert": market_alert,
             }
         )
+
 
     except Exception as e:
 
+        print(
+            f"Live market error for "
+            f"{item['security']}: {e}"
+        )
+
         live_rows.append(
             {
-                "Borrower": item["borrower"],
-                "Security": item["security"],
-                "Live Price": None,
-                "Shares": item["shares"],
-                "Live Collateral (Cr)": None,
-                "Live Cover": None,
-                "Required Cover": item["required_cover"],
-                "Buffer": None,
-                "Status": f"⚪ Price unavailable",
+                "date": live_trading_date,
+                "borrower": item["borrower"],
+                "security": item["security"],
+                "price": None,
+                "previous_close": None,
+                "daily_change_%": None,
+                "52_week_low": None,
+                "distance_from_52_week_low_%": None,
+                "last_updated": "Unavailable",
+                "shares": item["shares"],
+                "loan_amount": item["loan_amount"],
+                "collateral_value": None,
+                "cover": None,
+                "required_cover": item["required_cover"],
+                "buffer": None,
+                "risk_status": "⚪ Price Unavailable",
+                "market_alert": "⚪ Price Unavailable",
             }
         )
 
-live_df = pd.DataFrame(live_rows)
+
+# ------------------------------------------------------------
+# LIVE DATAFRAME
+# ------------------------------------------------------------
+
+live_df = pd.DataFrame(
+    live_rows
+)
+
 
 # ============================================================
-# FORMAT LIVE VALUES FOR DISPLAY
+# LIVE DISPLAY TABLE
 # ============================================================
 
-display_live_df = live_df.copy()
+display_live_df = live_df[
+    [
+        "borrower",
+        "security",
+        "price",
+        "last_updated",
+        "shares",
+        "collateral_value",
+        "cover",
+        "required_cover",
+        "buffer",
+        "risk_status",
+    ]
+].copy()
+
+
+display_live_df = display_live_df.rename(
+    columns={
+        "borrower": "Borrower",
+        "security": "Security",
+        "price": "Live Price",
+        "last_updated": "Market Data Time",
+        "shares": "Shares",
+        "collateral_value": "Live Collateral (Cr)",
+        "cover": "Live Cover",
+        "required_cover": "Required Cover",
+        "buffer": "Buffer",
+        "risk_status": "Status",
+    }
+)
+
 
 display_live_df["Live Price"] = (
     display_live_df["Live Price"]
     .apply(
-        lambda x: f"₹{x:,.2f}"
+        lambda x:
+        f"₹{x:,.2f}"
         if pd.notna(x)
         else "Unavailable"
     )
 )
+
 
 display_live_df["Live Collateral (Cr)"] = (
     display_live_df["Live Collateral (Cr)"]
     .apply(
-        lambda x: f"₹{x:,.2f} Cr"
+        lambda x:
+        f"₹{x:,.2f} Cr"
         if pd.notna(x)
         else "Unavailable"
     )
 )
 
+
 display_live_df["Live Cover"] = (
     display_live_df["Live Cover"]
     .apply(
-        lambda x: f"{x:.2f}x"
+        lambda x:
+        f"{x:.2f}x"
         if pd.notna(x)
         else "—"
     )
 )
+
 
 display_live_df["Required Cover"] = (
     display_live_df["Required Cover"]
     .apply(
-        lambda x: f"{x:.2f}x"
+        lambda x:
+        f"{x:.2f}x"
         if pd.notna(x)
         else "—"
     )
 )
+
 
 display_live_df["Buffer"] = (
     display_live_df["Buffer"]
     .apply(
-        lambda x: f"{x:+.2f}x"
+        lambda x:
+        f"{x:+.2f}x"
         if pd.notna(x)
         else "—"
     )
 )
 
+
 st.dataframe(
     display_live_df,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
 )
-
 # ============================================================
 # LOAD HISTORICAL COLLATERAL DATA
 # ============================================================
@@ -386,45 +563,97 @@ if "date" in market_df.columns:
 
 
 # ============================================================
-# 1. BORROWER RISK SUMMARY
+# 1. LIVE BORROWER RISK SUMMARY
 # ============================================================
 
 st.subheader("👥 Borrower Risk Summary")
 
+# Live borrower calculation.
+# IMPORTANT:
+# loan_amount and collateral_value are already stored in CRORE.
+# Do NOT use format_crore() on these values.
 
-borrower_risk = borrower_summary(
-    df.copy()
+live_borrower_rows = []
+
+for borrower_name, borrower_data in live_df.groupby("borrower"):
+
+    valid_data = borrower_data[
+        borrower_data["collateral_value"].notna()
+    ].copy()
+
+    if valid_data.empty:
+        continue
+
+    # Loan amount is repeated on every security row.
+    # Take the first value instead of summing it.
+    loan_amount_cr = float(
+        valid_data["loan_amount"].iloc[0]
+    )
+
+    collateral_value_cr = float(
+        valid_data["collateral_value"].sum()
+    )
+
+    total_cover = (
+        collateral_value_cr
+        / loan_amount_cr
+        if loan_amount_cr > 0
+        else None
+    )
+
+    required_cover = float(
+        valid_data["required_cover"].max()
+    )
+
+    buffer = (
+        total_cover - required_cover
+        if total_cover is not None
+        else None
+    )
+
+    if (
+        total_cover is not None
+        and total_cover >= required_cover
+    ):
+        status = "🟢 COMPLIED"
+    else:
+        status = "🔴 ACTION REQUIRED"
+
+    live_borrower_rows.append(
+        {
+            "borrower": borrower_name,
+            "loan_amount": loan_amount_cr,
+            "collateral_value": collateral_value_cr,
+            "total_cover": total_cover,
+            "required_cover": required_cover,
+            "buffer": buffer,
+            "status": status,
+        }
+    )
+
+
+live_borrower_risk = pd.DataFrame(
+    live_borrower_rows
 )
 
 
-borrower_columns = [
-    "borrower",
-    "loan_amount",
-    "collateral_value",
-    "total_cover",
-    "required_cover",
-    "buffer",
-    "status",
-]
+# ------------------------------------------------------------
+# DISPLAY
+# ------------------------------------------------------------
 
-
-available_borrower_columns = [
-    column
-    for column in borrower_columns
-    if column in borrower_risk.columns
-]
-
-
-borrower_view = borrower_risk[
-    available_borrower_columns
-].copy()
+borrower_view = live_borrower_risk.copy()
 
 
 if "loan_amount" in borrower_view.columns:
 
     borrower_view["loan_amount"] = (
         borrower_view["loan_amount"]
-        .apply(format_crore)
+        .apply(
+            lambda x:
+            f"₹{x:,.2f} Cr"
+            if pd.notna(x)
+            else "—"
+        )
     )
 
 
@@ -432,7 +661,12 @@ if "collateral_value" in borrower_view.columns:
 
     borrower_view["collateral_value"] = (
         borrower_view["collateral_value"]
-        .apply(format_crore)
+        .apply(
+            lambda x:
+            f"₹{x:,.2f} Cr"
+            if pd.notna(x)
+            else "—"
+        )
     )
 
 
@@ -467,41 +701,28 @@ st.dataframe(
 )
 
 
+st.caption(
+    "Live borrower position based on current market prices."
+)
+
 # ============================================================
-# 2. SECURITY RISK MONITORING
-#
-# LATEST TRADING DATE ONLY
+# 2. LIVE SECURITY RISK MONITORING
 # ============================================================
 
 st.subheader("🚦 Security Risk Monitoring")
 
 
-security_columns = [
-    "date",
-    "borrower",
-    "security",
-    "cover",
-    "required_cover",
-    "buffer",
-    "risk_status",
-]
-
-
-available_security_columns = [
-    column
-    for column in security_columns
-    if column in risk_df.columns
-]
-
-
-security_view = risk_df[
-    risk_df["date"] == latest_trading_date
+security_view = live_df[
+    [
+        "date",
+        "borrower",
+        "security",
+        "cover",
+        "required_cover",
+        "buffer",
+        "risk_status",
+    ]
 ].copy()
-
-
-security_view = security_view[
-    available_security_columns
-]
 
 
 security_view = security_view.sort_values(
@@ -509,36 +730,28 @@ security_view = security_view.sort_values(
 )
 
 
-if "date" in security_view.columns:
-
-    security_view["date"] = (
-        security_view["date"]
-        .dt.strftime("%d-%b-%Y")
-    )
+security_view["date"] = (
+    security_view["date"]
+    .dt.strftime("%d-%b-%Y")
+)
 
 
-if "cover" in security_view.columns:
-
-    security_view["cover"] = (
-        security_view["cover"]
-        .apply(format_cover)
-    )
+security_view["cover"] = (
+    security_view["cover"]
+    .apply(format_cover)
+)
 
 
-if "required_cover" in security_view.columns:
-
-    security_view["required_cover"] = (
-        security_view["required_cover"]
-        .apply(format_cover)
-    )
+security_view["required_cover"] = (
+    security_view["required_cover"]
+    .apply(format_cover)
+)
 
 
-if "buffer" in security_view.columns:
-
-    security_view["buffer"] = (
-        security_view["buffer"]
-        .apply(format_cover)
-    )
+security_view["buffer"] = (
+    security_view["buffer"]
+    .apply(format_cover)
+)
 
 
 st.dataframe(
@@ -549,90 +762,72 @@ st.dataframe(
 
 
 st.caption(
-    "Latest available trading date: "
-    + latest_trading_date.strftime("%d-%b-%Y")
+    "Live security risk position — "
+    + live_trading_date.strftime("%d-%b-%Y")
 )
 
 
 # ============================================================
-# 3. IMMEDIATE ATTENTION REQUIRED
+# 3. LIVE IMMEDIATE ATTENTION
 # ============================================================
 
 st.subheader("🚨 Immediate Attention Required")
 
 
-critical = risk_df[
-    risk_df["risk_status"].astype(str)
-    == "🔴 Action Required"
+critical_live = live_df[
+    live_df["cover"].notna()
+    &
+    (
+        live_df["cover"]
+        <
+        live_df["required_cover"]
+    )
 ].copy()
 
 
-critical_latest = critical[
-    critical["date"] == latest_trading_date
-].copy()
-
-
-if not critical_latest.empty:
+if not critical_live.empty:
 
     st.error(
-        f"{len(critical_latest)} security record(s) "
+        f"{len(critical_live)} live security record(s) "
         "below required cover."
     )
 
 
-    critical_columns = [
-        "date",
-        "borrower",
-        "security",
-        "cover",
-        "required_cover",
-        "buffer",
-        "risk_status",
-    ]
-
-
-    available_critical_columns = [
-        column
-        for column in critical_columns
-        if column in critical_latest.columns
-    ]
-
-
-    critical_view = critical_latest[
-        available_critical_columns
+    critical_view = critical_live[
+        [
+            "date",
+            "borrower",
+            "security",
+            "cover",
+            "required_cover",
+            "buffer",
+            "risk_status",
+        ]
     ].copy()
 
 
-    if "date" in critical_view.columns:
-
-        critical_view["date"] = (
-            critical_view["date"]
-            .dt.strftime("%d-%b-%Y")
-        )
+    critical_view["date"] = (
+        critical_view["date"]
+        .dt.strftime("%d-%b-%Y")
+    )
 
 
-    if "cover" in critical_view.columns:
-
-        critical_view["cover"] = (
-            critical_view["cover"]
-            .apply(format_cover)
-        )
+    critical_view["cover"] = (
+        critical_view["cover"]
+        .apply(format_cover)
+    )
 
 
-    if "required_cover" in critical_view.columns:
-
-        critical_view["required_cover"] = (
-            critical_view["required_cover"]
-            .apply(format_cover)
-        )
+    critical_view["required_cover"] = (
+        critical_view["required_cover"]
+        .apply(format_cover)
+    )
 
 
-    if "buffer" in critical_view.columns:
-
-        critical_view["buffer"] = (
-            critical_view["buffer"]
-            .apply(format_cover)
-        )
+    critical_view["buffer"] = (
+        critical_view["buffer"]
+        .apply(format_cover)
+    )
 
 
     st.dataframe(
@@ -645,45 +840,28 @@ if not critical_latest.empty:
 else:
 
     st.success(
-        "No collateral shortfall detected for the "
-        "latest trading date."
+        "No live collateral shortfall detected."
     )
 
 
 # ============================================================
-# 4. MARKET MOVEMENT MONITORING
-#
-# LATEST TRADING DATE ONLY
+# 4. LIVE MARKET MOVEMENT MONITORING
 # ============================================================
 
 st.subheader("📉 Market Movement Monitoring")
 
 
-market_columns = [
-    "date",
-    "borrower",
-    "security",
-    "price",
-    "daily_change_%",
-    "market_alert",
-]
-
-
-available_market_columns = [
-    column
-    for column in market_columns
-    if column in market_df.columns
-]
-
-
-market_view = market_df[
-    market_df["date"] == latest_trading_date
+market_view = live_df[
+    [
+        "date",
+        "borrower",
+        "security",
+        "price",
+        "previous_close",
+        "daily_change_%",
+        "market_alert",
+    ]
 ].copy()
-
-
-market_view = market_view[
-    available_market_columns
-]
 
 
 market_view = market_view.sort_values(
@@ -691,12 +869,56 @@ market_view = market_view.sort_values(
 )
 
 
-if "date" in market_view.columns:
+market_view = market_view.rename(
+    columns={
+        "date": "date",
+        "borrower": "borrower",
+        "security": "security",
+        "price": "price",
+        "previous_close": "previous_close",
+        "daily_change_%": "daily_change_%",
+        "market_alert": "market_alert",
+    }
+)
 
-    market_view["date"] = (
-        market_view["date"]
-        .dt.strftime("%d-%b-%Y")
+
+market_view["date"] = (
+    market_view["date"]
+    .dt.strftime("%d-%b-%Y")
+)
+
+
+market_view["price"] = (
+    market_view["price"]
+    .apply(
+        lambda x:
+        f"₹{x:,.2f}"
+        if pd.notna(x)
+        else "Unavailable"
     )
+)
+
+
+market_view["previous_close"] = (
+    market_view["previous_close"]
+    .apply(
+        lambda x:
+        f"₹{x:,.2f}"
+        if pd.notna(x)
+        else "—"
+    )
+)
+
+
+market_view["daily_change_%"] = (
+    market_view["daily_change_%"]
+    .apply(
+        lambda x:
+        f"{x:+.2f}%"
+        if pd.notna(x)
+        else "—"
+    )
+)
 
 
 st.dataframe(
@@ -707,7 +929,7 @@ st.dataframe(
 
 
 # ============================================================
-# 5. COLLATERAL STRESS TESTING
+# 5. LIVE COLLATERAL STRESS TESTING
 # ============================================================
 
 st.subheader("📉 Collateral Stress Testing")
@@ -715,83 +937,72 @@ st.subheader("📉 Collateral Stress Testing")
 
 try:
 
-    stress_df = run_stress_test(
-        df.copy()
+    live_stress_df = run_stress_test(
+        live_df.copy()
     )
 
 
-    if (
-        stress_df is not None
-        and not stress_df.empty
-    ):
+    if live_stress_df.empty:
 
-        stress_view = stress_df.copy()
-
-
-        # ----------------------------------------------------
-        # FINANCIAL AMOUNTS
-        # ----------------------------------------------------
-
-        financial_columns = [
-            "Current Collateral",
-            "Stressed Collateral",
-            "Loan Amount",
-        ]
-
-
-        for column in financial_columns:
-
-            if column in stress_view.columns:
-
-                stress_view[column] = (
-                    stress_view[column]
-                    .apply(format_crore)
-                )
-
-
-        # ----------------------------------------------------
-        # COVER
-        # ----------------------------------------------------
-
-        cover_columns = [
-            "Cover",
-            "Required Cover",
-        ]
-
-
-        for column in cover_columns:
-
-            if column in stress_view.columns:
-
-                stress_view[column] = (
-                    stress_view[column]
-                    .apply(format_cover)
-                )
-
-
-        st.dataframe(
-            stress_view,
-            width="stretch",
-            hide_index=True,
+        st.info(
+            "Live stress-test data is unavailable."
         )
-
 
     else:
 
-        st.info(
-            "No stress-test data available."
+        stress_display = live_stress_df.copy()
+
+
+        for column in [
+            "Current Collateral",
+            "Stressed Collateral",
+            "Loan Amount",
+        ]:
+
+            if column in stress_display.columns:
+
+                stress_display[column] = (
+                    stress_display[column]
+                    .apply(
+                        lambda x:
+                        f"₹{x:,.2f} Cr"
+                        if pd.notna(x)
+                        else "—"
+
+                    )
+                )
+
+
+        if "Cover" in stress_display.columns:
+
+            stress_display["Cover"] = (
+                stress_display["Cover"]
+                .apply(format_cover)
+            )
+
+
+        if "Required Cover" in stress_display.columns:
+
+            stress_display["Required Cover"] = (
+                stress_display["Required Cover"]
+                .apply(format_cover)
+            )
+
+
+        st.dataframe(
+            stress_display,
+            width="stretch",
+            hide_index=True,
         )
 
 
 except Exception as e:
 
     st.warning(
-        "Stress testing could not be calculated: "
-        + str(e)
+        f"Live stress testing unavailable: {e}"
     )
 
-
-# ============================================================
+    # ----------------------------------------------------
 # 6. SHARE MOVEMENT TRACKING
 #
 # THIS IS THE ONLY SHARE MOVEMENT TABLE
