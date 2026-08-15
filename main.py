@@ -11,6 +11,14 @@ from config import BORROWERS
 
 from modules.market_data import get_stock_price
 
+from modules.input_database import (
+    initialize_input_database,
+    list_loans,
+    list_securities,
+)
+
+from modules.live_collateral import get_today_outstanding
+
 from modules.database import (
     initialize_database,
     save_record,
@@ -300,11 +308,21 @@ def main():
     # PROCESS BORROWERS
     # ========================================================
 
-    for borrower in BORROWERS:
+    initialize_input_database()
+    input_loans = list_loans(
+        active_only=False
+    )
 
-        borrower_name = borrower["name"]
+    for db_loan in input_loans:
 
-        loan_amount = borrower["loan_amount"]
+        borrower_name = db_loan["borrower"]
+
+        loan_amount = (
+            get_today_outstanding(
+                db_loan
+            )
+            * 10_000_000
+        )
 
         print()
         print(
@@ -326,16 +344,28 @@ def main():
         # PROCESS SECURITIES
         # ====================================================
 
-        for security in borrower["securities"]:
+        securities = list_securities(
+            loan_db_id=db_loan["id"],
+            active_only=True,
+        )
 
-            stock_name = security["name"]
+        for security in securities:
 
-            shares = security["shares"]
-
-            required_cover = security[
-                "required_cover"
+            stock_name = security[
+                "listed_company_name"
             ]
 
+            shares = int(
+                security[
+                    "initial_pledged_shares"
+                ]
+            )
+
+            required_cover = float(
+                security[
+                    "collateralwise_security_cover"
+                ]
+            )
             # ------------------------------------------------
             # DUPLICATE CHECK
             # ------------------------------------------------
@@ -709,9 +739,10 @@ def main():
             f"{total_cover:.2f}x"
         )
 
-        total_required_cover = borrower.get(
-            "total_required_cover",
-            2.00
+        total_required_cover = float(
+            db_loan[
+                "required_security_cover"
+            ]
         )
 
         if total_cover >= total_required_cover:

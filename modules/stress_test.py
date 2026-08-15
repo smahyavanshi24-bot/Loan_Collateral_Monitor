@@ -1,248 +1,870 @@
 import pandas as pd
 
 
-def run_stress_test(df, scenarios=None):
+# ============================================================
+# COLLATERAL STRESS TESTING ENGINE
+# ============================================================
+#
+# Stress is ALWAYS applied to the underlying security price.
+#
+# Modes:
+#   1. Single Scrip
+#   2. Combined Scrips
+#   3. Custom Scrips
+#
+# Every stress produces:
+#   - Security-wise stressed result
+#   - Borrower-wise resulting stressed cover
+#
+# Status logic:
+#
+#   SAFE:
+#       Cover > Required Cover + 0.10x
+#
+#   WATCH:
+#       Required Cover <= Cover <= Required Cover + 0.10x
+#
+#   ACTION REQUIRED:
+#       Cover < Required Cover
+#
+# Historical database records are never modified.
+# ============================================================
+
+
+DEFAULT_PRICE_FALLS = [
+    0,
+    5,
+    10,
+    15,
+    20,
+    25,
+    30,
+    40,
+    50,
+]
+
+
+# ============================================================
+# STATUS
+# ============================================================
+
+def get_stress_status(
+    cover,
+    required_cover,
+):
     """
-    Collateral Stress Testing Engine
+    Determine SAFE / WATCH / ACTION REQUIRED.
 
-    Uses ONLY the latest available trading date.
+    SAFE:
+        Cover > Required Cover + 0.10x
 
-    Calculates the impact of stock-price falls on:
-    - Total collateral value
-    - Borrower-level cover ratio
-    - Risk status
+    WATCH:
+        Required Cover <= Cover <= Required Cover + 0.10x
 
-    Assumption:
-    A uniform percentage fall in all pledged securities
-    reduces collateral value by the same percentage.
+    ACTION REQUIRED:
+        Cover < Required Cover
     """
+
+    if cover is None or pd.isna(cover):
+        return "⚪ Price Unavailable"
+
+    if required_cover is None or pd.isna(required_cover):
+        return "⚪ Requirement Unavailable"
+
+    safe_threshold = (
+        float(required_cover) + 0.10
+    )
+
+    if cover > safe_threshold:
+
+        return "🟢 SAFE"
+
+    elif cover >= float(required_cover):
+
+        return "🟡 WATCH"
+
+    else:
+
+        return "🔴 ACTION REQUIRED"
+
+
+# ============================================================
+# NORMALIZE LIVE DATA
+# ============================================================
+
+def _prepare_data(df):
+    """
+    Prepare live collateral dataframe.
+
+    Expected columns include:
+
+        borrower
+        security
+        price
+        shares
+        loan_amount
+        collateral_value
+        required_cover
+        borrower_required_cover
+
+    required_cover:
+        Security-wise required cover.
+
+    borrower_required_cover:
+        Borrower-wise required cover.
+    """
+
+    if df is None:
+        return pd.DataFrame()
 
     if df.empty:
         return pd.DataFrame()
 
-    # --------------------------------------------------------
-    # DEFAULT STRESS SCENARIOS
-    # --------------------------------------------------------
+    data = df.copy()
 
-    if scenarios is None:
-        scenarios = [
-            0,
-            -5,
-            -10,
-            -15,
-            -20,
-            -30
-        ]
 
     # --------------------------------------------------------
-    # COPY DATA
+    # NUMERIC FIELDS
     # --------------------------------------------------------
 
-    df = df.copy()
+    numeric_columns = [
+        "price",
+        "shares",
+        "loan_amount",
+        "collateral_value",
+        "required_cover",
+        "borrower_required_cover",
+    ]
+
+    for column in numeric_columns:
+
+        if column in data.columns:
+
+            data[column] = pd.to_numeric(
+                data[column],
+                errors="coerce"
+            )
+
 
     # --------------------------------------------------------
-    # NUMERIC CONVERSION
+    # DATE
     # --------------------------------------------------------
 
-    df["loan_amount"] = pd.to_numeric(
-        df["loan_amount"],
-        errors="coerce"
-    )
+    if "date" in data.columns:
 
-    df["collateral_value"] = pd.to_numeric(
-        df["collateral_value"],
-        errors="coerce"
-    )
-
-    # --------------------------------------------------------
-    # REMOVE INVALID RECORDS
-    # --------------------------------------------------------
-
-    df = df[
-        df["loan_amount"].notna()
-        &
-        df["collateral_value"].notna()
-    ].copy()
-
-    if df.empty:
-        return pd.DataFrame()
-
-    # --------------------------------------------------------
-    # NORMALIZE DATE
-    # --------------------------------------------------------
-
-    if "date" in df.columns:
-
-        df["date"] = pd.to_datetime(
-            df["date"],
+        data["date"] = pd.to_datetime(
+            data["date"],
             errors="coerce"
         )
 
-        df = df[
-            df["date"].notna()
+
+    # --------------------------------------------------------
+    # REQUIRED COLUMNS
+    # --------------------------------------------------------
+
+    required_columns = [
+        "borrower",
+        "security",
+        "price",
+        "shares",
+        "loan_amount",
+        "collateral_value",
+        "required_cover",
+        "borrower_required_cover",
+    ]
+
+    missing = [
+        column
+        for column in required_columns
+        if column not in data.columns
+    ]
+
+    if missing:
+
+        raise ValueError(
+            "Stress testing is missing required "
+            f"columns: {', '.join(missing)}"
+        )
+
+
+    # --------------------------------------------------------
+    # LATEST TRADING DATE
+    # --------------------------------------------------------
+
+    if "date" in data.columns:
+
+        data = data[
+            data["date"].notna()
         ].copy()
 
-    if df.empty:
-        return pd.DataFrame()
+        if data.empty:
+            return pd.DataFrame()
+
+        # Ignore weekends
+        data = data[
+            data["date"].dt.weekday < 5
+        ].copy()
+
+        if data.empty:
+            return pd.DataFrame()
+
+        latest_date = data["date"].max()
+
+        data = data[
+            data["date"] == latest_date
+        ].copy()
+
 
     # --------------------------------------------------------
-    # REMOVE WEEKENDS
+    # VALID MARKET DATA
     # --------------------------------------------------------
 
-    df = df[
-        df["date"].dt.weekday < 5
+    data = data[
+        data["price"].notna()
+        &
+        (data["price"] > 0)
+        &
+        data["shares"].notna()
+        &
+        (data["shares"] >= 0)
+        &
+        data["loan_amount"].notna()
+        &
+        (data["loan_amount"] > 0)
     ].copy()
 
-    if df.empty:
-        return pd.DataFrame()
+
+    return data
+
+
+# ============================================================
+# BUILD STRESS MAP
+# ============================================================
+
+def _build_stress_map(
+    data,
+    mode,
+    selected_security=None,
+    price_fall=0,
+    custom_stresses=None,
+):
+    """
+    Return a dictionary:
+
+        security -> price fall %
+
+    Example:
+
+        {
+            "Kalyan Jewellers India Limited": 10,
+            "Mindspace Business Parks REIT": 0
+        }
+
+    Modes:
+
+        single
+        combined
+        custom
+    """
+
+    mode = str(
+        mode or ""
+    ).strip().lower()
+
 
     # --------------------------------------------------------
-    # LATEST TRADING DATE ONLY
+    # SINGLE SCRIP
     # --------------------------------------------------------
 
-    latest_trading_date = df["date"].max()
+    if mode in {
+        "single",
+        "single scrip",
+        "single security",
+    }:
 
-    latest_df = df[
-        df["date"] == latest_trading_date
-    ].copy()
+        if not selected_security:
 
-    if latest_df.empty:
-        return pd.DataFrame()
-
-    # --------------------------------------------------------
-    # BORROWER-WISE CURRENT POSITION
-    # --------------------------------------------------------
-
-    borrower_summary = (
-        latest_df
-        .groupby(
-            "borrower",
-            as_index=False
-        )
-        .agg(
-            loan_amount=(
-                "loan_amount",
-                "first"
-            ),
-
-            current_collateral=(
-                "collateral_value",
-                "sum"
+            raise ValueError(
+                "Please select a security."
             )
+
+        selected_security = str(
+            selected_security
+        ).strip()
+
+        available = set(
+            data["security"]
+            .astype(str)
+            .str.strip()
         )
+
+        if selected_security not in available:
+
+            raise ValueError(
+                f"Security '{selected_security}' "
+                "is not available for stress testing."
+            )
+
+        fall = abs(
+            float(price_fall or 0)
+        )
+
+        return {
+            selected_security: fall
+        }
+
+
+    # --------------------------------------------------------
+    # COMBINED SCRIPS
+    # --------------------------------------------------------
+
+    if mode in {
+        "combined",
+        "combined scrips",
+        "combined securities",
+    }:
+
+        fall = abs(
+            float(price_fall or 0)
+        )
+
+        return {
+            str(security).strip(): fall
+            for security in data["security"]
+            .dropna()
+            .unique()
+        }
+
+
+    # --------------------------------------------------------
+    # CUSTOM SCRIPS
+    # --------------------------------------------------------
+
+    if mode in {
+        "custom",
+        "custom scrips",
+        "custom securities",
+    }:
+
+        if not custom_stresses:
+
+            raise ValueError(
+                "Please select at least one security "
+                "for custom stress testing."
+            )
+
+        available = set(
+            data["security"]
+            .astype(str)
+            .str.strip()
+        )
+
+        stress_map = {}
+
+        for security, fall in custom_stresses.items():
+
+            security = str(
+                security
+            ).strip()
+
+            if security not in available:
+
+                raise ValueError(
+                    f"Security '{security}' "
+                    "is not available for this borrower."
+                )
+
+            stress_map[security] = abs(
+                float(fall or 0)
+            )
+
+        return stress_map
+
+
+    raise ValueError(
+        "Invalid stress mode. "
+        "Use Single Scrip, Combined Scrips "
+        "or Custom Scrips."
     )
 
+
+# ============================================================
+# RUN STRESS TEST
+# ============================================================
+
+def run_stress_test(
+    df,
+    mode="Combined Scrips",
+    selected_security=None,
+    price_fall=0,
+    custom_stresses=None,
+):
+    """
+    Run collateral stress testing.
+
+    Parameters
+    ----------
+    df:
+        Current live collateral dataframe.
+
+    mode:
+        Single Scrip
+        Combined Scrips
+        Custom Scrips
+
+    selected_security:
+        Used for Single Scrip mode.
+
+    price_fall:
+        Underlying price fall percentage for
+        Single / Combined mode.
+
+    custom_stresses:
+        Dictionary for Custom mode.
+
+        Example:
+
+            {
+                "Kalyan Jewellers India Limited": 20,
+                "Mindspace Business Parks REIT": 10
+            }
+
+
+    Returns
+    -------
+    dict containing:
+
+        security_result
+        borrower_result
+        stress_map
+        mode
+    """
+
+
     # --------------------------------------------------------
-    # REQUIRED BORROWER COVER
-    #
-    # Your current system uses 2.00x as the total
-    # borrower-level required cover.
+    # PREPARE DATA
     # --------------------------------------------------------
 
-    required_cover = 2.00
+    data = _prepare_data(df)
+
+    if data.empty:
+
+        return {
+            "security_result": pd.DataFrame(),
+            "borrower_result": pd.DataFrame(),
+            "stress_map": {},
+            "mode": mode,
+        }
+
 
     # --------------------------------------------------------
-    # STRESS CALCULATION
+    # CREATE STRESS MAP
     # --------------------------------------------------------
 
-    results = []
+    stress_map = _build_stress_map(
+        data=data,
+        mode=mode,
+        selected_security=selected_security,
+        price_fall=price_fall,
+        custom_stresses=custom_stresses,
+    )
 
-    for _, row in borrower_summary.iterrows():
+
+    # --------------------------------------------------------
+    # APPLY STRESS
+    # --------------------------------------------------------
+
+    security_rows = []
+
+
+    for _, row in data.iterrows():
+
+        security = str(
+            row["security"]
+        ).strip()
 
         borrower = row["borrower"]
 
-        loan_amount = row["loan_amount"]
+        current_price = float(
+            row["price"]
+        )
 
-        current_collateral = row[
-            "current_collateral"
+        shares = float(
+            row["shares"]
+        )
+
+        loan_amount = float(
+            row["loan_amount"]
+        )
+
+        required_security_cover = float(
+            row["required_cover"]
+        )
+
+        borrower_required_cover = float(
+            row["borrower_required_cover"]
+        )
+
+
+        # ----------------------------------------------------
+        # DETERMINE STRESS FOR THIS SECURITY
+        # ----------------------------------------------------
+
+        fall = float(
+            stress_map.get(
+                security,
+                0
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # STRESSED PRICE
+        # ----------------------------------------------------
+
+        stressed_price = (
+            current_price
+            * (
+                1
+                -
+                (fall / 100)
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # STRESSED COLLATERAL
+        #
+        # Price is in ₹.
+        #
+        # Convert to ₹ Crore:
+        #
+        # ₹ × shares / 1 crore
+        # ----------------------------------------------------
+
+        stressed_collateral = (
+            stressed_price
+            * shares
+            / 10_000_000
+        )
+
+
+        # ----------------------------------------------------
+        # STRESSED SECURITY COVER
+        # ----------------------------------------------------
+
+        stressed_security_cover = (
+            stressed_collateral
+            / loan_amount
+        )
+
+
+        # ----------------------------------------------------
+        # SECURITY BUFFER
+        # ----------------------------------------------------
+
+        security_buffer = (
+            stressed_security_cover
+            -
+            required_security_cover
+        )
+
+
+        # ----------------------------------------------------
+        # SECURITY STATUS
+        # ----------------------------------------------------
+
+        security_status = get_stress_status(
+            stressed_security_cover,
+            required_security_cover,
+        )
+
+
+        # ----------------------------------------------------
+        # STORE SECURITY RESULT
+        # ----------------------------------------------------
+
+        security_rows.append(
+            {
+                "Borrower":
+                    borrower,
+
+                "Security":
+                    security,
+
+                "Stressed Price":
+                    stressed_price,
+
+                "Stressed Collateral":
+                    stressed_collateral,
+
+                "Stressed Cover":
+                    stressed_security_cover,
+
+                "Required Cover":
+                    required_security_cover,
+
+                "Buffer":
+                    security_buffer,
+
+                "Status":
+                    security_status,
+
+                # Internal calculation fields
+                "_loan_amount":
+                    loan_amount,
+
+                "_borrower_required_cover":
+                    borrower_required_cover,
+
+                "_current_collateral":
+                    float(
+                        row["collateral_value"]
+                    ),
+
+                "_stress_pct":
+                    fall,
+            }
+        )
+
+
+    security_result = pd.DataFrame(
+        security_rows
+    )
+
+
+    if security_result.empty:
+
+        return {
+            "security_result":
+                pd.DataFrame(),
+
+            "borrower_result":
+                pd.DataFrame(),
+
+            "stress_map":
+                stress_map,
+
+            "mode":
+                mode,
+        }
+
+
+    # ========================================================
+    # BORROWER-LEVEL RESULT
+    # ========================================================
+
+    borrower_rows = []
+
+
+    for borrower, group in security_result.groupby(
+        "Borrower",
+        sort=False
+    ):
+
+        # ----------------------------------------------------
+        # LOAN AMOUNT
+        # ----------------------------------------------------
+
+        loan_amount = float(
+            group["_loan_amount"].iloc[0]
+        )
+
+
+        # ----------------------------------------------------
+        # BORROWER REQUIRED COVER
+        # ----------------------------------------------------
+
+        required_borrower_cover = float(
+            group[
+                "_borrower_required_cover"
+            ].max()
+        )
+
+
+        # ----------------------------------------------------
+        # CURRENT COLLATERAL
+        # ----------------------------------------------------
+
+        current_collateral = float(
+            group[
+                "_current_collateral"
+            ].sum()
+        )
+
+
+        # ----------------------------------------------------
+        # STRESSED COLLATERAL
+        # ----------------------------------------------------
+
+        stressed_collateral = float(
+            group[
+                "Stressed Collateral"
+            ].sum()
+        )
+
+
+        # ----------------------------------------------------
+        # CURRENT BORROWER COVER
+        # ----------------------------------------------------
+
+        current_borrower_cover = (
+            current_collateral
+            / loan_amount
+        )
+
+
+        # ----------------------------------------------------
+        # STRESSED BORROWER COVER
+        # ----------------------------------------------------
+
+        stressed_borrower_cover = (
+            stressed_collateral
+            / loan_amount
+        )
+
+
+        # ----------------------------------------------------
+        # BUFFER
+        # ----------------------------------------------------
+
+        borrower_buffer = (
+            stressed_borrower_cover
+            -
+            required_borrower_cover
+        )
+
+
+        # ----------------------------------------------------
+        # STATUS
+        # ----------------------------------------------------
+
+        borrower_status = get_stress_status(
+            stressed_borrower_cover,
+            required_borrower_cover,
+        )
+
+
+        # ----------------------------------------------------
+        # STORE BORROWER RESULT
+        # ----------------------------------------------------
+
+        borrower_rows.append(
+            {
+                "Borrower":
+                    borrower,
+
+                "Stressed Collateral":
+                    stressed_collateral,
+
+                "Stressed Cover":
+                    stressed_borrower_cover,
+
+                "Required Cover":
+                    required_borrower_cover,
+
+                "Buffer":
+                    borrower_buffer,
+
+                "Status":
+                    borrower_status,
+
+                # Additional useful fields
+                "_Current Collateral":
+                    current_collateral,
+
+                "_Current Cover":
+                    current_borrower_cover,
+
+                "_Loan Amount":
+                    loan_amount,
+            }
+        )
+
+
+    borrower_result = pd.DataFrame(
+        borrower_rows
+    )
+
+
+    # --------------------------------------------------------
+    # RETURN
+    # --------------------------------------------------------
+
+    return {
+        "security_result":
+            security_result,
+
+        "borrower_result":
+            borrower_result,
+
+        "stress_map":
+            stress_map,
+
+        "mode":
+            mode,
+    }
+
+
+# ============================================================
+# HELPER: GET SECURITY LIST
+# ============================================================
+
+def get_available_securities(
+    df,
+    borrower=None,
+):
+    """
+    Return active securities available for
+    stress testing.
+
+    If borrower is supplied, only that borrower's
+    securities are returned.
+    """
+
+    data = _prepare_data(df)
+
+    if data.empty:
+        return []
+
+
+    if borrower:
+
+        data = data[
+            data["borrower"].astype(str)
+            ==
+            str(borrower)
         ]
 
-        if loan_amount <= 0:
-            continue
 
-        for fall in scenarios:
+    return sorted(
+        data["security"]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
 
-            # Example:
-            # -10% -> 0.90
-            # -30% -> 0.70
 
-            stress_factor = (
-                1 + (fall / 100)
-            )
+# ============================================================
+# HELPER: GET BORROWER LIST
+# ============================================================
 
-            stressed_collateral = (
-                current_collateral *
-                stress_factor
-            )
+def get_available_borrowers(df):
+    """
+    Return borrowers available for stress testing.
+    """
 
-            stressed_cover = (
-                stressed_collateral /
-                loan_amount
-            )
+    data = _prepare_data(df)
 
-            # ------------------------------------------------
-            # RISK STATUS
-            # ------------------------------------------------
+    if data.empty:
+        return []
 
-            if stressed_cover >= 2.10:
 
-                status = "🟢 SAFE"
-
-            elif stressed_cover >= 2.00:
-
-                status = "🟡 WATCH"
-
-            else:
-
-                status = "🔴 ACTION REQUIRED"
-
-            # ------------------------------------------------
-            # RESULT
-            # ------------------------------------------------
-
-            results.append(
-                {
-                    "Trading Date":
-                        latest_trading_date.strftime(
-                            "%d-%b-%Y"
-                        ),
-
-                    "Borrower":
-                        borrower,
-
-                    "Price Fall %":
-                        f"{abs(fall)}%",
-
-                    "Current Collateral":
-                        round(
-                            current_collateral,
-                            2
-                        ),
-
-                    "Stressed Collateral":
-                        round(
-                            stressed_collateral,
-                            2
-                        ),
-
-                    "Loan Amount":
-                        round(
-                            loan_amount,
-                            2
-                        ),
-
-                    "Cover":
-                        round(
-                            stressed_cover,
-                            2
-                        ),
-
-                    "Required Cover":
-                        required_cover,
-
-                    "Status":
-                        status
-                }
-            )
-
-    return pd.DataFrame(results)
+    return sorted(
+        data["borrower"]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
