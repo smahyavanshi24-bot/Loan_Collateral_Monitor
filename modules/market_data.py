@@ -33,6 +33,9 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
+import io
+import zipfile
+import requests
 
 
 # ============================================================
@@ -329,6 +332,268 @@ def pd_series_numeric(series):
         errors="coerce"
     )
 
+# ============================================================
+# NSE DAILY BHAVCOPY
+# ============================================================
+
+def get_nse_eod_price(
+    nse_symbol=None,
+    isin=None,
+    trading_date=None,
+):
+    """
+    Fetch the official NSE CM Bhavcopy for a trading date.
+
+    Returns the NSE closing price (ClsPric) for the security.
+
+    Security matching priority:
+        1. ISIN
+        2. NSE ticker symbol
+
+    Returns:
+        float price
+        None if today's NSE Bhavcopy cannot be retrieved
+        or the security cannot be found.
+    """
+
+    if trading_date is None:
+        trading_date = datetime.now(IST).date()
+
+    date_text = trading_date.strftime(
+        "%Y%m%d"
+    )
+
+    url = (
+        "https://nsearchives.nseindia.com/content/cm/"
+        f"BhavCopy_NSE_CM_0_0_0_{date_text}_F_0000.csv.zip"
+    )
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 "
+            "(Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/151.0.0.0 Safari/537.36"
+        ),
+        "Accept": "*/*",
+        "Referer": "https://www.nseindia.com/",
+    }
+
+    try:
+
+        print(
+            f"Fetching NSE Bhavcopy for "
+            f"{trading_date.strftime('%d-%b-%Y')}..."
+        )
+
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=30,
+        )
+
+        if response.status_code != 200:
+
+            print(
+                f"NSE Bhavcopy unavailable. "
+                f"HTTP {response.status_code}"
+            )
+
+            return None
+
+        content = response.content
+
+        if not content.startswith(b"PK"):
+
+            print(
+                "NSE response is not a valid ZIP file."
+            )
+
+            return None
+
+        with zipfile.ZipFile(
+            io.BytesIO(content)
+        ) as archive:
+
+            csv_files = [
+                name
+                for name in archive.namelist()
+                if name.lower().endswith(".csv")
+            ]
+
+            if not csv_files:
+
+                print(
+                    "NSE Bhavcopy ZIP contains "
+                    "no CSV file."
+                )
+
+                return None
+
+            with archive.open(
+                csv_files[0]
+            ) as csv_file:
+
+                df = pd.read_csv(
+                    csv_file
+                )
+
+        # ----------------------------------------------------
+        # VALIDATE TRADING DATE
+        # ----------------------------------------------------
+
+        if "TradDt" not in df.columns:
+
+            print(
+                "NSE Bhavcopy does not contain "
+                "TradDt column."
+            )
+
+            return None
+
+        df["TradDt"] = pd.to_datetime(
+            df["TradDt"],
+            errors="coerce"
+        ).dt.date
+
+        df = df[
+            df["TradDt"] == trading_date
+        ]
+
+        if df.empty:
+
+            print(
+                "NSE Bhavcopy contains no records "
+                f"for {trading_date}."
+            )
+
+            return None
+
+        # ----------------------------------------------------
+        # NORMALIZE IDENTIFIERS
+        # ----------------------------------------------------
+
+        if "ISIN" in df.columns:
+
+            df["_ISIN"] = (
+                df["ISIN"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.upper()
+            )
+
+        if "TckrSymb" in df.columns:
+
+            df["_SYMBOL"] = (
+                df["TckrSymb"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.upper()
+            )
+
+        # ----------------------------------------------------
+        # MATCH SECURITY
+        # ----------------------------------------------------
+
+        matched = pd.DataFrame()
+
+        if isin:
+
+            isin_normalized = (
+                str(isin)
+                .strip()
+                .upper()
+            )
+
+            if "_ISIN" in df.columns:
+
+                matched = df[
+                    df["_ISIN"]
+                    == isin_normalized
+                ]
+
+        if matched.empty and nse_symbol:
+
+            symbol_normalized = (
+                str(nse_symbol)
+                .strip()
+                .upper()
+                .replace(".NS", "")
+            )
+
+            if "_SYMBOL" in df.columns:
+
+                matched = df[
+                    df["_SYMBOL"]
+                    == symbol_normalized
+                ]
+
+        if matched.empty:
+
+            print(
+                f"NSE security not found: "
+                f"{nse_symbol or isin}"
+            )
+
+            return None
+
+        # ----------------------------------------------------
+        # CLOSING PRICE
+        # ----------------------------------------------------
+
+        if "ClsPric" not in matched.columns:
+
+            print(
+                "NSE Bhavcopy does not contain "
+                "ClsPric column."
+            )
+
+            return None
+
+        price_series = pd.to_numeric(
+            matched["ClsPric"],
+            errors="coerce"
+        ).dropna()
+
+        price_series = price_series[
+            price_series > 0
+        ]
+
+        if price_series.empty:
+
+            print(
+                f"No valid NSE closing price for "
+                f"{nse_symbol or isin}"
+            )
+
+            return None
+
+        price = float(
+            price_series.iloc[0]
+        )
+
+        print(
+            f"NSE EOD price received: "
+            f"{nse_symbol or isin} = "
+            f"Rs.{price:.2f}"
+        )
+
+        return round(
+            price,
+            2
+        )
+
+    except Exception as e:
+
+        print(
+            f"NSE Bhavcopy error: {e}"
+        )
+
+        return None
+
 
 # ============================================================
 # DAILY MARKET DATA
@@ -367,10 +632,99 @@ def get_daily_market_data(
 
     try:
 
-        stock = yf.Ticker(
-            yahoo_symbol
+        # ----------------------------------------------------
+        # NSE OFFICIAL EOD BHAVCOPY
+        # ----------------------------------------------------
+        #
+        # After market close, prefer the current trading day's
+        # NSE Bhavcopy over Yahoo Finance.
+        #
+        # This prevents stale Yahoo daily data from being used
+        # as today's closing price.
+        # ----------------------------------------------------
+
+        today = datetime.now(
+            IST
+        ).date()
+
+        resolved = resolve_security(
+            stock_display_name
+            or yahoo_symbol
         )
 
+        nse_price = get_nse_eod_price(
+            nse_symbol=resolved.get(
+                "nse_symbol"
+            ),
+            isin=resolved.get(
+                "isin"
+            ),
+            trading_date=today,
+        )
+
+        if nse_price is not None:
+
+            # Use NSE official closing price.
+            #
+            # We still fetch Yahoo history below because the
+            # existing function calculates previous close and
+            # 52-week-low statistics from Yahoo's history.
+
+            stock = yf.Ticker(
+                yahoo_symbol
+            )
+
+            data = stock.history(
+                period="1y",
+                interval="1d",
+                auto_adjust=False,
+                prepost=False
+            )
+
+            if data is None or data.empty:
+
+                # NSE has today's authoritative close, so we
+                # can still return today's price even if Yahoo
+                # history is unavailable.
+
+                return {
+                    "price": round(
+                        nse_price,
+                        2
+                    ),
+                    "previous_close": None,
+                    "daily_change_%": None,
+                    "52_week_low": None,
+                    "distance_from_52_week_low_%": None,
+                    "last_updated": (
+                        today.strftime(
+                            "%d-%b-%Y"
+                        )
+                    ),
+                    "source": (
+                        "NSE Bhavcopy EOD"
+                    ),
+                }
+
+            # Continue through the existing Yahoo-history
+            # calculations, but today's price will be replaced
+            # by the verified NSE close below.
+
+        else:
+
+            # NSE EOD unavailable.
+            # Fall back to existing Yahoo Finance logic.
+
+            stock = yf.Ticker(
+                yahoo_symbol
+            )
+
+            data = stock.history(
+                period="1y",
+                interval="1d",
+                auto_adjust=False,
+                prepost=False
+            )
         data = stock.history(
             period="1y",
             interval="1d",
@@ -410,14 +764,22 @@ def get_daily_market_data(
             )
 
 
+
         # ----------------------------------------------------
         # LATEST CLOSE
         # ----------------------------------------------------
 
-        latest_price = float(
-            close_prices.iloc[-1]
-        )
+        if nse_price is not None:
 
+            latest_price = float(
+                nse_price
+            )
+
+        else:
+
+            latest_price = float(
+                close_prices.iloc[-1]
+            )
 
         # ----------------------------------------------------
         # PREVIOUS CLOSE
@@ -488,40 +850,51 @@ def get_daily_market_data(
         # TIMESTAMP
         # ----------------------------------------------------
 
-        last_updated = None
+        # If NSE Bhavcopy supplied today's official EOD price,
+        # use the NSE trading date rather than Yahoo's date.
+        # Yahoo may lag for securities such as REITs.
 
-        if len(data.index) > 0:
+        if nse_price is not None:
 
-            last_timestamp = data.index[-1]
+            last_updated = (
+                today.strftime("%d-%b-%Y")
+            )
 
-            try:
+        else:
 
-                if last_timestamp.tzinfo is None:
+            last_updated = None
 
-                    last_timestamp = (
-                        last_timestamp
-                        .tz_localize("Asia/Kolkata")
+            if len(data.index) > 0:
+
+                last_timestamp = data.index[-1]
+
+                try:
+
+                    if last_timestamp.tzinfo is None:
+
+                        last_timestamp = (
+                            last_timestamp
+                            .tz_localize("Asia/Kolkata")
+                        )
+
+                    else:
+
+                        last_timestamp = (
+                            last_timestamp
+                            .tz_convert("Asia/Kolkata")
+                        )
+
+                    last_updated = (
+                        last_timestamp.strftime(
+                            "%d-%b-%Y %H:%M:%S"
+                        )
                     )
 
-                else:
+                except Exception:
 
-                    last_timestamp = (
-                        last_timestamp
-                        .tz_convert("Asia/Kolkata")
+                    last_updated = (
+                        str(last_timestamp)
                     )
-
-                last_updated = (
-                    last_timestamp.strftime(
-                        "%d-%b-%Y %H:%M:%S"
-                    )
-                )
-
-            except Exception:
-
-                last_updated = (
-                    str(last_timestamp)
-                )
-
 
         # ----------------------------------------------------
         # RETURN
