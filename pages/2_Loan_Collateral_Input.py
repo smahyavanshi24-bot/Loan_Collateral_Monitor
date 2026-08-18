@@ -747,6 +747,21 @@ with tab_security:
                         format="%.2f",
                     )
 
+                    security_active = st.checkbox(
+    "Security Active",
+    value=bool(
+        selected_security.get(
+            "active",
+            1,
+        )
+    ),
+    help=(
+        "Uncheck this to deactivate the security. "
+        "The security and its historical records will "
+        "remain in the database."
+    ),
+)
+
                     submitted = st.form_submit_button(
                         "💾 Update Security",
                         type="primary",
@@ -784,6 +799,7 @@ with tab_security:
                                 initial_pledged_shares,
                                 initial_pledge_date,
                                 collateralwise_security_cover,
+                                int(security_active),
                             )
 
                             st.success(

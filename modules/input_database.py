@@ -1176,6 +1176,7 @@ def update_security(
     initial_pledged_shares,
     initial_pledge_date,
     collateralwise_security_cover,
+    active=1,
 ):
 
     initialize_input_database()
@@ -1192,7 +1193,8 @@ def update_security(
                 isin = ?,
                 initial_pledged_shares = ?,
                 initial_pledge_date = ?,
-                collateralwise_security_cover = ?
+                collateralwise_security_cover = ?,
+                avtive = ?
 
             WHERE id = ?
             """,

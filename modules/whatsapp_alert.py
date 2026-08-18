@@ -57,9 +57,9 @@ def get_borrower_required_cover(borrower_name):
     Example:
 
     {
-        "name": "Everbest",
-        "loan_amount": 1200000000,
-        "total_required_cover": 2.00
+        "name": "ABC Ltd",
+        "loan_amount": 1000000000,
+        "total_required_cover": 2.50
     }
     """
 

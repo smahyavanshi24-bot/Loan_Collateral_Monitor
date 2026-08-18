@@ -78,11 +78,6 @@ MARKET_CLOSE = time(15, 30)
 #     ISIN = INE0CCU25019
 #     NSE  = MINDSPACE
 #
-# Existing securities:
-#     JSW Energy
-#     JSW Steel
-#     Jindal Steel & Power
-#
 # This mapping is intentionally kept here as a market-data
 # resolution layer. It does NOT control borrowers, loans,
 # shares or collateral positions.
@@ -130,51 +125,16 @@ SECURITY_MASTER = {
         "isin": "INE0CCU25019",
     },
 
-
-    # --------------------------------------------------------
-    # Existing securities
-    # --------------------------------------------------------
-    "JSW ENERGY": {
-        "nse_symbol": "JSWENERGY",
-        "isin": "",
-    },
-
-    "JSWENERGY": {
-        "nse_symbol": "JSWENERGY",
-        "isin": "",
-    },
-
-    "JSW STEEL": {
-        "nse_symbol": "JSWSTEEL",
-        "isin": "",
-    },
-
-    "JSWSTEEL": {
-        "nse_symbol": "JSWSTEEL",
-        "isin": "",
-    },
-
-    "JINDAL STEEL & POWER": {
-        "nse_symbol": "JINDALSTEL",
-        "isin": "",
-    },
-
-    "JINDALSTEL": {
-        "nse_symbol": "JINDALSTEL",
-        "isin": "",
-    },
 }
 
 
+    
 # ============================================================
 # BACKWARD-COMPATIBILITY SYMBOL DICTIONARY
 # ============================================================
 
 SYMBOLS = {
-    "JSW Energy": "JSWENERGY.NS",
-    "JSW Steel": "JSWSTEEL.NS",
-    "Jindal Steel & Power": "JINDALSTEL.NS",
-
+   
     "Kalyan Jewellers India Limited": "KALYANKJIL.NS",
     "Mindspace Business Parks REIT": "MINDSPACE.NS",
 }
@@ -342,33 +302,38 @@ def get_nse_eod_price(
     trading_date=None,
 ):
     """
-    Fetch the official NSE CM Bhavcopy for a trading date.
+    Fetch the latest available official NSE CM Bhavcopy.
 
-    Returns the NSE closing price (ClsPric) for the security.
+    NSE now exposes Bhavcopy through its Daily Reports API.
+    We do NOT construct the filename ourselves.
 
-    Security matching priority:
-        1. ISIN
-        2. NSE ticker symbol
+    The function:
+
+    1. Asks NSE which CM Bhavcopy is actually available.
+    2. Selects the latest trading date <= requested date.
+    3. Downloads the official ZIP.
+    4. Reads the CSV inside the ZIP.
+    5. Matches security using ISIN first, then NSE symbol.
+    6. Returns official NSE closing price and actual trading date.
 
     Returns:
-        float price
-        None if today's NSE Bhavcopy cannot be retrieved
-        or the security cannot be found.
+
+        {
+            "price": float,
+            "trading_date": date
+        }
+
+        or None if unavailable.
     """
 
     if trading_date is None:
-        trading_date = datetime.now(IST).date()
 
-    date_text = trading_date.strftime(
-        "%Y%m%d"
-    )
-
-    url = (
-        "https://nsearchives.nseindia.com/content/cm/"
-        f"BhavCopy_NSE_CM_0_0_0_{date_text}_F_0000.csv.zip"
-    )
+        trading_date = datetime.now(
+            IST
+        ).date()
 
     headers = {
+
         "User-Agent": (
             "Mozilla/5.0 "
             "(Windows NT 10.0; Win64; x64) "
@@ -376,27 +341,203 @@ def get_nse_eod_price(
             "(KHTML, like Gecko) "
             "Chrome/151.0.0.0 Safari/537.36"
         ),
-        "Accept": "*/*",
-        "Referer": "https://www.nseindia.com/",
+
+        "Accept": (
+            "application/json, text/plain, */*"
+        ),
+
+        "Referer": (
+            "https://www.nseindia.com/all-reports"
+        ),
     }
 
     try:
 
         print(
-            f"Fetching NSE Bhavcopy for "
-            f"{trading_date.strftime('%d-%b-%Y')}..."
+            f"Finding latest NSE CM Bhavcopy "
+            f"for {trading_date.strftime('%d-%b-%Y')}..."
         )
 
-        response = requests.get(
+        # ----------------------------------------------------
+        # NSE DAILY REPORTS API
+        # ----------------------------------------------------
+
+        session = requests.Session()
+
+        session.headers.update(
+            headers
+        )
+
+        reports_response = session.get(
+            "https://www.nseindia.com/api/daily-reports?key=CM",
+            timeout=30,
+        )
+
+        if reports_response.status_code != 200:
+
+            print(
+                "NSE daily-reports API unavailable. "
+                f"HTTP {reports_response.status_code}"
+            )
+
+            return None
+
+        reports_json = (
+            reports_response.json()
+        )
+
+        # ----------------------------------------------------
+        # FIND AVAILABLE BHAVCOPY REPORTS
+        # ----------------------------------------------------
+
+        candidates = []
+
+        for bucket_name in (
+            "CurrentDay",
+            "PreviousDay",
+        ):
+
+            bucket = reports_json.get(
+                bucket_name,
+                []
+            )
+
+            if not isinstance(
+                bucket,
+                list
+            ):
+                continue
+
+            for report in bucket:
+
+                file_key = str(
+                    report.get(
+                        "fileKey",
+                        ""
+                    )
+                ).upper()
+
+                # ------------------------------------------------
+                # ONLY USE NSE CM UDiFF COMMON BHAVCOPY FINAL
+                # ------------------------------------------------
+                #
+                # Do NOT use:
+                #
+                #   CM-BHAVCOPY-PR-ZIP
+                #   CM-BHAVCOPY-DAT
+                #   SME-BHAVCOPY-CSV
+                #   CM-BHAVDATA-FULL
+                #
+                # The UDiFF Common Bhavcopy Final is the official
+                # security-price file containing the closing price.
+                # ------------------------------------------------
+
+                if file_key != "CM-UDIFF-BHAVCOPY-CSV":
+                    continue
+
+                report_date_text = (
+                    report.get(
+                        "tradingDate"
+                    )
+                )
+
+                if not report_date_text:
+                    continue
+
+                try:
+
+                    report_date = (
+                        datetime.strptime(
+                            report_date_text,
+                            "%d-%b-%Y"
+                        ).date()
+                    )
+
+                except Exception:
+
+                    continue
+
+                if report_date <= trading_date:
+
+                    candidates.append(
+                        (
+                            report_date,
+                            report
+                        )
+                    )
+
+        if not candidates:
+
+            print(
+                "No NSE CM Bhavcopy is "
+                "currently available."
+            )
+
+            return None
+
+        # ----------------------------------------------------
+        # SELECT LATEST AVAILABLE TRADING DATE
+        # ----------------------------------------------------
+
+        candidates.sort(
+            key=lambda item: item[0],
+            reverse=True
+        )
+
+        selected_date, selected_report = (
+            candidates[0]
+        )
+
+        file_path = (
+            selected_report.get(
+                "filePath"
+            )
+            or ""
+        ).rstrip("/")
+
+        file_name = (
+            selected_report.get(
+                "fileActlName"
+            )
+            or ""
+        )
+
+        if not file_path or not file_name:
+
+            print(
+                "NSE report API returned an "
+                "incomplete Bhavcopy record."
+            )
+
+            return None
+
+        url = (
+            f"{file_path}/{file_name}"
+        )
+
+        print(
+            f"NSE Bhavcopy selected: "
+            f"{file_name}"
+        )
+
+        print(
+            f"NSE actual trading date: "
+            f"{selected_date.strftime('%d-%b-%Y')}"
+        )
+
+        print(
+            "Downloading NSE Bhavcopy..."
+        )
+
+        response = session.get(
             url,
-            headers=headers,
             timeout=30,
         )
 
         if response.status_code != 200:
 
             print(
-                f"NSE Bhavcopy unavailable. "
+                "NSE Bhavcopy download failed. "
                 f"HTTP {response.status_code}"
             )
 
@@ -404,7 +545,9 @@ def get_nse_eod_price(
 
         content = response.content
 
-        if not content.startswith(b"PK"):
+        if not content.startswith(
+            b"PK"
+        ):
 
             print(
                 "NSE response is not a valid ZIP file."
@@ -412,14 +555,24 @@ def get_nse_eod_price(
 
             return None
 
+        # ----------------------------------------------------
+        # READ ZIP
+        # ----------------------------------------------------
+
         with zipfile.ZipFile(
             io.BytesIO(content)
         ) as archive:
 
             csv_files = [
+
                 name
-                for name in archive.namelist()
-                if name.lower().endswith(".csv")
+
+                for name
+                in archive.namelist()
+
+                if name.lower().endswith(
+                    ".csv"
+                )
             ]
 
             if not csv_files:
@@ -431,6 +584,11 @@ def get_nse_eod_price(
 
                 return None
 
+            print(
+                f"NSE CSV inside ZIP: "
+                f"{csv_files[0]}"
+            )
+
             with archive.open(
                 csv_files[0]
             ) as csv_file:
@@ -440,54 +598,127 @@ def get_nse_eod_price(
                 )
 
         # ----------------------------------------------------
-        # VALIDATE TRADING DATE
+        # NORMALIZE COLUMN NAMES
         # ----------------------------------------------------
 
-        if "TradDt" not in df.columns:
+        df.columns = (
+
+            df.columns
+            .astype(str)
+            .str.strip()
+        )
+
+        # Create normalized helper columns.
+
+        upper_columns = {
+            str(column).strip().upper(): column
+            for column in df.columns
+        }
+
+        # ----------------------------------------------------
+        # FIND ISIN COLUMN
+        # ----------------------------------------------------
+
+        isin_column = None
+
+        for candidate in (
+            "ISIN",
+            "ISINNO",
+            "ISIN_NO",
+            "ISINCODE",
+        ):
+
+            if candidate in upper_columns:
+
+                isin_column = (
+                    upper_columns[candidate]
+                )
+
+                break
+
+        # ----------------------------------------------------
+        # FIND SYMBOL COLUMN
+        # ----------------------------------------------------
+
+        symbol_column = None
+
+        for candidate in (
+            "TCKRSYMB",
+            "TCKR_SYMB",
+            "SYMBOL",
+            "SYMBL",
+            "SCTYSYMB",
+            "SCTY_SYMB",
+        ):
+
+            if candidate in upper_columns:
+
+                symbol_column = (
+                    upper_columns[candidate]
+                )
+
+                break
+
+        # ----------------------------------------------------
+        # FIND CLOSING PRICE COLUMN
+        # ----------------------------------------------------
+
+        close_column = None
+
+        for candidate in (
+            "CLSPRIC",
+            "CLS_PRIC",
+            "CLSPRIC",
+            "CLOSE",
+            "CLOSEPRICE",
+            "CLOSE_PRICE",
+        ):
+
+            if candidate in upper_columns:
+
+                close_column = (
+                    upper_columns[candidate]
+                )
+
+                break
+
+        if close_column is None:
 
             print(
                 "NSE Bhavcopy does not contain "
-                "TradDt column."
+                "a recognizable closing-price column."
             )
-
-            return None
-
-        df["TradDt"] = pd.to_datetime(
-            df["TradDt"],
-            errors="coerce"
-        ).dt.date
-
-        df = df[
-            df["TradDt"] == trading_date
-        ]
-
-        if df.empty:
 
             print(
-                "NSE Bhavcopy contains no records "
-                f"for {trading_date}."
+                "Available columns:"
+            )
+
+            print(
+                list(df.columns)
             )
 
             return None
 
         # ----------------------------------------------------
-        # NORMALIZE IDENTIFIERS
+        # NORMALIZE MATCH FIELDS
         # ----------------------------------------------------
 
-        if "ISIN" in df.columns:
+        if isin_column is not None:
 
             df["_ISIN"] = (
-                df["ISIN"]
+
+                df[isin_column]
                 .fillna("")
                 .astype(str)
                 .str.strip()
                 .str.upper()
             )
 
-        if "TckrSymb" in df.columns:
+        if symbol_column is not None:
 
             df["_SYMBOL"] = (
-                df["TckrSymb"]
+
+                df[symbol_column]
                 .fillna("")
                 .astype(str)
                 .str.strip()
@@ -500,41 +731,49 @@ def get_nse_eod_price(
 
         matched = pd.DataFrame()
 
-        if isin:
+        if (
+            isin
+            and "_ISIN" in df.columns
+        ):
 
             isin_normalized = (
+
                 str(isin)
                 .strip()
                 .upper()
             )
 
-            if "_ISIN" in df.columns:
+            matched = df[
+                df["_ISIN"]
+                == isin_normalized
+            ]
 
-                matched = df[
-                    df["_ISIN"]
-                    == isin_normalized
-                ]
-
-        if matched.empty and nse_symbol:
+        if (
+            matched.empty
+            and nse_symbol
+            and "_SYMBOL" in df.columns
+        ):
 
             symbol_normalized = (
+
                 str(nse_symbol)
                 .strip()
                 .upper()
-                .replace(".NS", "")
+                .replace(
+                    ".NS",
+                    ""
+                )
             )
 
-            if "_SYMBOL" in df.columns:
-
-                matched = df[
-                    df["_SYMBOL"]
-                    == symbol_normalized
-                ]
+            matched = df[
+                df["_SYMBOL"]
+                == symbol_normalized
+            ]
 
         if matched.empty:
 
             print(
-                f"NSE security not found: "
+                "NSE security not found: "
                 f"{nse_symbol or isin}"
             )
 
@@ -544,28 +783,21 @@ def get_nse_eod_price(
         # CLOSING PRICE
         # ----------------------------------------------------
 
-        if "ClsPric" not in matched.columns:
-
-            print(
-                "NSE Bhavcopy does not contain "
-                "ClsPric column."
-            )
-
-            return None
-
         price_series = pd.to_numeric(
-            matched["ClsPric"],
+            matched[close_column],
             errors="coerce"
         ).dropna()
 
-        price_series = price_series[
-            price_series > 0
-        ]
+        price_series = (
+            price_series[
+                price_series > 0
+            ]
+        )
 
         if price_series.empty:
 
             print(
-                f"No valid NSE closing price for "
+                "No valid NSE closing price for "
                 f"{nse_symbol or isin}"
             )
 
@@ -576,15 +808,27 @@ def get_nse_eod_price(
         )
 
         print(
-            f"NSE EOD price received: "
+            "NSE OFFICIAL EOD PRICE: "
             f"{nse_symbol or isin} = "
             f"Rs.{price:.2f}"
         )
 
-        return round(
-            price,
-            2
+        print(
+            "NSE OFFICIAL TRADING DATE: "
+            f"{selected_date.strftime('%d-%b-%Y')}"
         )
+
+        return {
+
+            "price": round(
+                price,
+                2
+            ),
+
+            "trading_date": (
+                selected_date
+            ),
+        }
 
     except Exception as e:
 
@@ -652,7 +896,7 @@ def get_daily_market_data(
             or yahoo_symbol
         )
 
-        nse_price = get_nse_eod_price(
+        nse_result = get_nse_eod_price(
             nse_symbol=resolved.get(
                 "nse_symbol"
             ),
@@ -661,6 +905,23 @@ def get_daily_market_data(
             ),
             trading_date=today,
         )
+
+        nse_price = None
+        nse_trading_date = None
+
+        if nse_result is not None:
+
+            nse_price = float(
+                nse_result.get(
+                    "price"
+                )
+            )
+
+            nse_trading_date = (
+                nse_result.get(
+                    "trading_date"
+                )
+            )
 
         if nse_price is not None:
 
@@ -856,9 +1117,40 @@ def get_daily_market_data(
 
         if nse_price is not None:
 
-            last_updated = (
-                today.strftime("%d-%b-%Y")
-            )
+            if nse_trading_date is not None:
+
+                try:
+
+                    if hasattr(
+                        nse_trading_date,
+                        "strftime"
+                    ):
+
+                        last_updated = (
+                            nse_trading_date.strftime(
+                                "%d-%b-%Y"
+                            )
+                        )
+
+                    else:
+
+                        last_updated = str(
+                            nse_trading_date
+                        )
+
+                except Exception:
+
+                    last_updated = str(
+                        nse_trading_date
+                    )
+
+            else:
+
+                last_updated = (
+                    today.strftime(
+                        "%d-%b-%Y"
+                    )
+                )
 
         else:
 
@@ -937,7 +1229,9 @@ def get_daily_market_data(
             ),
 
             "source": (
-                "Yahoo Finance Daily Close"
+                "NSE UDiFF Common Bhavcopy"
+                if nse_price is not None
+                else "Yahoo Finance Daily Close"
             ),
         }
 
@@ -1495,11 +1789,6 @@ if __name__ == "__main__":
 
         "MINDSPACE",
 
-        "JSW Energy",
-
-        "JSW Steel",
-
-        "Jindal Steel & Power",
     ]
 
 

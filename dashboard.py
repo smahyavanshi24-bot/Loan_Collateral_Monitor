@@ -2328,6 +2328,7 @@ if not borrower_daily.empty:
                 axis=alt.Axis(
                     format="%d-%b-%Y",
                     labelAngle=-45,
+                    tickMinStep=86400000,
                 ),
             ),
 

@@ -1,28 +1,15 @@
 {
-    "Everbest": {
-        "loan_amount": 1200000000,
+    "ABC Ltd": {
+        "loan_amount": 1000000000,
+        "total_required_cover": 2.50,
         "securities": {
-            "JSW Energy": {
-                "shares": 2533300,
+            "Kalyan Jewellers India Limited": {
+                "shares": 2066600,
                 "required_cover": 1.00
             },
-            "JSW Steel": {
-                "shares": 1096000,
+            "Mindspace Business Parks REIT": {
+                "shares": 2722200,
                 "required_cover": 1.00
-            }
-        }
-    },
-
-    "Siddeshwari": {
-        "loan_amount": 2500000000,
-        "securities": {
-            "JSW Energy": {
-                "shares": 9200000,
-                "required_cover": 1.50
-            },
-            "Jindal Steel & Power": {
-                "shares": 1600000,
-                "required_cover": 0.50
             }
         }
     }
