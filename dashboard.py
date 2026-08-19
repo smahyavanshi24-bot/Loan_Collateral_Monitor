@@ -1793,9 +1793,28 @@ st.caption(
 
 try:
 
-    movement_df = get_share_movements()
+    from modules.input_database import list_share_movements
+
+    master_movements = list_share_movements()
+
+    movement_df = pd.DataFrame(
+        master_movements
+    )
+
+    if not movement_df.empty:
+
+        movement_df = movement_df.rename(
+            columns={
+                "number_of_shares": "movement_shares",
+                "listed_company_name": "security",
+            }
+        )
 
 except Exception as e:
+
+    print(
+        f"Master share movement load error: {e}"
+    )
 
     movement_df = pd.DataFrame()
 
