@@ -22,6 +22,7 @@ from modules.live_collateral import get_today_outstanding
 from modules.database import (
     initialize_database,
     save_record,
+    update_record,  
     alert_already_sent,
     save_alert,
     get_records_by_date
@@ -366,19 +367,26 @@ def main():
                     "collateralwise_security_cover"
                 ]
             )
+
+            
+
+
+
             # ------------------------------------------------
-            # DUPLICATE CHECK
+            # CHECK WHETHER TODAY'S RECORD EXISTS
             # ------------------------------------------------
 
-            if record_already_exists(
+            existing_record = record_already_exists(
                 today,
                 borrower_name,
                 stock_name
-            ):
+            )
+
+            if existing_record:
 
                 print()
                 print(
-                    "RECORD ALREADY EXISTS"
+                    "TODAY'S RECORD ALREADY EXISTS"
                 )
 
                 print(
@@ -388,13 +396,48 @@ def main():
                 )
 
                 print(
-                    "Skipping duplicate entry."
+                    "Refreshing market price..."
+                )
+
+                print()
+
+
+            # ------------------------------------------------
+            # FETCH PRICE
+            # ------------------------------------------------
+
+            print()
+
+            print(
+                f"Fetching NSE price for "
+                f"{stock_name}..."
+            )
+
+            try:
+
+                price = get_stock_price(
+                    stock_name
+                )
+
+            except Exception as e:
+
+                print()
+                print(
+                    "PRICE NOT AVAILABLE"
+                )
+
+                print(
+                    f"{stock_name}: {e}"
+                )
+
+                print(
+                    "Record will NOT be saved."
                 )
 
                 print()
 
                 continue
-
+            
             # ------------------------------------------------
             # FETCH PRICE
             # ------------------------------------------------
@@ -604,18 +647,36 @@ def main():
                     )
             }
 
+
             # ------------------------------------------------
-            # SAVE
+            # SAVE / UPDATE
             # ------------------------------------------------
 
-            save_record(
-                record
-            )
+            if existing_record:
+
+                update_record(
+                    record
+                )
+
+                print()
+                print(
+                    "Existing today's record updated successfully."
+                )
+
+            else:
+
+                save_record(
+                    record
+                )
+
+                print()
+                print(
+                    "New collateral record saved successfully."
+                )
 
             new_records.append(
                 record
             )
-
             # =================================================
             # CRITICAL SHORTFALL ALERT
             # =================================================

@@ -170,8 +170,9 @@ def save_record(record):
     connection.close()
 
 
+
 # ============================================================
-# GET TODAY'S RECORDS
+# GET RECORDS BY DATE
 # ============================================================
 
 def get_records_by_date(date):
@@ -185,7 +186,6 @@ def get_records_by_date(date):
     cursor.execute(
         """
         SELECT
-
             date,
             borrower,
             security,
@@ -203,10 +203,7 @@ def get_records_by_date(date):
 
         WHERE date = ?
 
-        ORDER BY
-            borrower,
-            security
-
+        ORDER BY borrower, security
         """,
 
         (date,)
@@ -216,11 +213,72 @@ def get_records_by_date(date):
 
     connection.close()
 
-    return [
-        dict(row)
-        for row in rows
-    ]
+    return [dict(row) for row in rows]
+# ============================================================
+# UPDATE EXISTING COLLATERAL RECORD
+# ============================================================
 
+def update_record(record):
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE collateral_history
+
+        SET
+            price = ?,
+            shares = ?,
+            loan_amount = ?,
+            collateral_value = ?,
+            cover = ?,
+            required_cover = ?,
+            status = ?,
+            shortfall_cover = ?,
+            additional_collateral_required = ?
+
+        WHERE
+            date = ?
+            AND borrower = ?
+            AND security = ?
+        """,
+
+        (
+
+            record["price"],
+
+            record["shares"],
+
+            record["loan_amount"],
+
+            record["collateral_value"],
+
+            record["cover"],
+
+            record["required_cover"],
+
+            record["status"],
+
+            record["shortfall_cover"],
+
+            record[
+                "additional_collateral_required"
+            ],
+
+            record["date"],
+
+            record["borrower"],
+
+            record["security"],
+
+        )
+    )
+
+    connection.commit()
+
+    connection.close()
 
 # ============================================================
 # GET HISTORICAL RECORDS

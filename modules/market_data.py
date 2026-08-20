@@ -1538,6 +1538,374 @@ def get_stock_data(stock_name):
 # GET LIVE STOCK DATA
 # ============================================================
 
+# ============================================================
+# NSE OFFICIAL LIVE MARKET DATA
+# ============================================================
+
+def get_nse_live_market_data(
+    nse_symbol,
+    stock_display_name=None,
+):
+    """
+    Fetch the current live market price directly from NSE.
+
+    This is the primary live source for NSE securities.
+
+    Important:
+        - Uses NSE's official quote-equity endpoint.
+        - Supports normal equities and hybrid securities such
+          as REITs with series RR.
+        - Validates that NSE's lastUpdateTime belongs to today.
+        - NEVER returns previous-day data as a live price.
+    """
+
+    symbol = str(
+        nse_symbol or ""
+    ).strip().upper()
+
+    if not symbol:
+        raise Exception(
+            "NSE symbol is missing."
+        )
+
+    display_name = (
+        stock_display_name
+        or symbol
+    )
+
+    base_url = (
+        "https://www.nseindia.com"
+    )
+
+    quote_url = (
+        f"{base_url}/api/quote-equity"
+        f"?symbol={symbol}"
+    )
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/146.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "application/json, text/plain, */*"
+        ),
+        "Accept-Language": (
+            "en-IN,en;q=0.9,en-US;q=0.8"
+        ),
+        "Referer": (
+            f"{base_url}/get-quotes/"
+            f"equity?symbol={symbol}"
+        ),
+        "X-Requested-With": (
+            "XMLHttpRequest"
+        ),
+        "Connection": "keep-alive",
+    }
+
+    session = requests.Session()
+
+    try:
+
+        # ----------------------------------------------------
+        # INITIAL NSE SESSION
+        # ----------------------------------------------------
+
+        session.get(
+            base_url,
+            headers=headers,
+            timeout=15,
+        )
+
+        # ----------------------------------------------------
+        # OFFICIAL NSE QUOTE
+        # ----------------------------------------------------
+
+        response = session.get(
+            quote_url,
+            headers=headers,
+            timeout=15,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+    except Exception as e:
+
+        raise Exception(
+            f"NSE live quote request failed "
+            f"for {symbol}: {e}"
+        ) from e
+
+    # --------------------------------------------------------
+    # VALIDATE RESPONSE
+    # --------------------------------------------------------
+
+    if not isinstance(data, dict):
+
+        raise Exception(
+            f"Invalid NSE response for {symbol}."
+        )
+
+    price_info = data.get(
+        "priceInfo"
+    )
+
+    metadata = data.get(
+        "metadata"
+    )
+
+    if not isinstance(
+        price_info,
+        dict,
+    ):
+
+        raise Exception(
+            f"NSE price information unavailable "
+            f"for {display_name}."
+        )
+
+    # --------------------------------------------------------
+    # LIVE PRICE
+    # --------------------------------------------------------
+
+    live_price = pd.to_numeric(
+        price_info.get(
+            "lastPrice"
+        ),
+        errors="coerce",
+    )
+
+    if pd.isna(live_price) or live_price <= 0:
+
+        raise Exception(
+            f"NSE returned no valid live price "
+            f"for {display_name}."
+        )
+
+    live_price = float(
+        live_price
+    )
+
+    # --------------------------------------------------------
+    # PREVIOUS CLOSE
+    # --------------------------------------------------------
+
+    previous_close = pd.to_numeric(
+        price_info.get(
+            "previousClose"
+        ),
+        errors="coerce",
+    )
+
+    if (
+        pd.isna(previous_close)
+        or previous_close <= 0
+    ):
+
+        previous_close = None
+
+    else:
+
+        previous_close = float(
+            previous_close
+        )
+
+    # --------------------------------------------------------
+    # NSE UPDATE TIMESTAMP
+    # --------------------------------------------------------
+
+    last_update_text = None
+
+    if isinstance(
+        metadata,
+        dict,
+    ):
+
+        last_update_text = (
+            metadata.get(
+                "lastUpdateTime"
+            )
+        )
+
+    if not last_update_text:
+
+        raise Exception(
+            f"NSE did not provide a valid "
+            f"market update timestamp for "
+            f"{display_name}."
+        )
+
+    # NSE normally returns:
+    # 20-Aug-2026 13:23:00
+
+    try:
+
+        last_timestamp = (
+            pd.to_datetime(
+                last_update_text,
+                format="%d-%b-%Y %H:%M:%S",
+                errors="raise",
+            )
+        )
+
+    except Exception as e:
+
+        raise Exception(
+            f"Could not parse NSE timestamp "
+            f"for {display_name}: "
+            f"{last_update_text}"
+        ) from e
+
+    # NSE timestamp is Indian market time.
+
+    last_timestamp = (
+        last_timestamp
+        .tz_localize(
+            "Asia/Kolkata"
+        )
+    )
+
+    # --------------------------------------------------------
+    # CRITICAL STALE-DATA PROTECTION
+    # --------------------------------------------------------
+
+    now_ist = datetime.now(
+        IST
+    )
+
+    if (
+        last_timestamp.date()
+        != now_ist.date()
+    ):
+
+        raise Exception(
+            f"NSE returned stale live data "
+            f"for {display_name}: "
+            f"{last_timestamp.strftime('%d-%b-%Y %H:%M:%S')} "
+            f"IST."
+        )
+
+    # NSE should never report a future timestamp.
+
+    if (
+        last_timestamp
+        > now_ist + pd.Timedelta(
+            minutes=5
+        )
+    ):
+
+        raise Exception(
+            f"NSE returned a future timestamp "
+            f"for {display_name}: "
+            f"{last_timestamp.strftime('%d-%b-%Y %H:%M:%S')} "
+            f"IST."
+        )
+
+    # --------------------------------------------------------
+    # DAILY CHANGE
+    # --------------------------------------------------------
+
+    percentage_change = pd.to_numeric(
+        price_info.get(
+            "pChange"
+        ),
+        errors="coerce",
+    )
+
+    if pd.isna(
+        percentage_change
+    ):
+
+        if (
+            previous_close is not None
+            and previous_close > 0
+        ):
+
+            percentage_change = (
+                (
+                    live_price
+                    - previous_close
+                )
+                / previous_close
+            ) * 100
+
+        else:
+
+            percentage_change = None
+
+    else:
+
+        percentage_change = float(
+            percentage_change
+        )
+
+    # --------------------------------------------------------
+    # MARKET ALERT
+    # --------------------------------------------------------
+
+    if (
+        percentage_change is not None
+        and percentage_change <= -5
+    ):
+
+        market_alert = (
+            "Significant Fall"
+        )
+
+    else:
+
+        market_alert = "Normal"
+
+    # --------------------------------------------------------
+    # RESULT
+    # --------------------------------------------------------
+
+    result = {
+
+        "price": live_price,
+
+        "previous_close": (
+            previous_close
+        ),
+
+        "daily_change_%": (
+            percentage_change
+        ),
+
+        "market_alert": (
+            market_alert
+        ),
+
+        "last_updated": (
+            last_timestamp
+            .strftime(
+                "%d-%b-%Y %H:%M:%S"
+            )
+        ),
+
+        "date": last_timestamp,
+
+        "source": (
+            "NSE Official Live Quote"
+        ),
+    }
+
+    print(
+        f"NSE LIVE price received: "
+        f"{display_name} = "
+        f"₹{live_price:.2f}"
+    )
+
+    print(
+        f"NSE LIVE timestamp: "
+        f"{last_timestamp.strftime('%d-%b-%Y %H:%M:%S')} IST"
+    )
+
+    return result
+
 def get_live_stock_data(stock_name):
     """
     Main function used by the live dashboard.
@@ -1615,26 +1983,50 @@ def get_live_stock_data(stock_name):
     )
 
 
-    # ========================================================
+        # ========================================================
     # MARKET OPEN
     # ========================================================
 
     if is_market_open(now):
 
-        # During market hours, NEVER substitute an EOD/previous-day
-        # price when the live feed fails. A stale collateral price
-        # is more dangerous than an explicit unavailable status.
+        # ========================================================
+        # PRIMARY SOURCE — OFFICIAL NSE LIVE QUOTE
+        # ========================================================
+
+        try:
+
+            return get_nse_live_market_data(
+                resolved["nse_symbol"],
+                stock_display_name=stock_name,
+            )
+
+        except Exception as nse_error:
+
+            print(
+                f"NSE live data unavailable "
+                f"for {stock_name}"
+            )
+
+            print(
+                f"Reason: {nse_error}"
+            )
+
+
+        # ========================================================
+        # SECONDARY SOURCE — YAHOO INTRADAY
+        # ========================================================
+
         try:
 
             return get_intraday_market_data(
                 yahoo_symbol,
-                stock_display_name=stock_name
+                stock_display_name=stock_name,
             )
 
         except Exception as intraday_error:
 
             print(
-                f"⚠️ LIVE intraday data unavailable "
+                f"Yahoo live intraday data unavailable "
                 f"for {stock_name}"
             )
 
@@ -1642,9 +2034,17 @@ def get_live_stock_data(stock_name):
                 f"Reason: {intraday_error}"
             )
 
+            # ----------------------------------------------------
+            # IMPORTANT:
+            # NEVER use yesterday's close during market hours.
+            # ----------------------------------------------------
+
             raise Exception(
-                f"Live market price unavailable for {stock_name}. "
-                f"No previous-day price will be used during market hours."
+                f"Live market price unavailable "
+                f"for {stock_name}. "
+                f"Both NSE and Yahoo live sources failed. "
+                f"No previous-day price will be used during "
+                f"market hours."
             ) from intraday_error
 
 
@@ -1689,7 +2089,6 @@ def get_live_stock_data(stock_name):
             f"Valid market data unavailable "
             f"for {stock_name}"
         ) from daily_error
-
 
 # ============================================================
 # GET STOCK PRICE
