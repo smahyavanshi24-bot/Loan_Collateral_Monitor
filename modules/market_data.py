@@ -1308,22 +1308,20 @@ def get_intraday_market_data(
 
 
     # --------------------------------------------------------
-    # VALID CLOSE VALUES
+    # VALID LIVE CLOSE VALUES
     # --------------------------------------------------------
 
-    prices = (
-        pd_series_numeric(
-            intraday["Close"]
-        )
-        .dropna()
+    prices = pd_series_numeric(
+        intraday["Close"]
     )
 
-    prices = prices[
-        prices > 0
-    ]
+    # Keep only rows with a valid positive price. This preserves
+    # the timestamp belonging to the actual price being used.
+    valid_intraday = intraday.loc[
+        prices.notna() & (prices > 0)
+    ].copy()
 
-
-    if prices.empty:
+    if valid_intraday.empty:
 
         raise Exception(
             f"No valid live price received "
@@ -1332,11 +1330,74 @@ def get_intraday_market_data(
 
 
     # --------------------------------------------------------
+    # LAST INTRADAY TIMESTAMP
+    # --------------------------------------------------------
+
+    last_timestamp = valid_intraday.index[-1]
+
+    try:
+
+        if last_timestamp.tzinfo is None:
+
+            last_timestamp = last_timestamp.tz_localize(
+                "Asia/Kolkata"
+            )
+
+        else:
+
+            last_timestamp = last_timestamp.tz_convert(
+                "Asia/Kolkata"
+            )
+
+    except Exception:
+
+        pass
+
+
+    # --------------------------------------------------------
+    # CRITICAL LIVE-DATA VALIDATION
+    # --------------------------------------------------------
+    # During Indian market hours we must NEVER accept a
+    # previous-day intraday response as today's live price.
+    # Yahoo can occasionally return stale/lagging intraday
+    # data for individual securities (notably some REITs).
+    #
+    # If the latest timestamp is not today's IST date, reject
+    # it. The dashboard will then show "Price Unavailable"
+    # instead of silently displaying yesterday's price.
+    # --------------------------------------------------------
+
+    now_ist = datetime.now(IST)
+
+    if last_timestamp.date() != now_ist.date():
+
+        raise Exception(
+            f"Stale intraday data for {display_name}: "
+            f"latest timestamp is "
+            f"{last_timestamp.strftime('%d-%b-%Y %H:%M:%S')} IST, "
+            f"but today is {now_ist.strftime('%d-%b-%Y')}."
+        )
+
+
+    # Do not accept a future-dated response. A small 5-minute
+    # tolerance protects against minor provider clock skew.
+    if last_timestamp > now_ist + pd.Timedelta(minutes=5):
+
+        raise Exception(
+            f"Invalid future intraday timestamp for {display_name}: "
+            f"{last_timestamp.strftime('%d-%b-%Y %H:%M:%S')} IST"
+        )
+
+
+    # --------------------------------------------------------
     # LATEST INTRADAY PRICE
     # --------------------------------------------------------
 
     live_price = float(
-        prices.iloc[-1]
+        pd.to_numeric(
+            valid_intraday["Close"],
+            errors="coerce"
+        ).iloc[-1]
     )
 
 
@@ -1403,29 +1464,7 @@ def get_intraday_market_data(
     # --------------------------------------------------------
     # LAST MARKET TIMESTAMP
     # --------------------------------------------------------
-
-    last_timestamp = intraday.index[-1]
-
-    try:
-
-        if last_timestamp.tzinfo is None:
-
-            last_timestamp = (
-                last_timestamp
-                .tz_localize("Asia/Kolkata")
-            )
-
-        else:
-
-            last_timestamp = (
-                last_timestamp
-                .tz_convert("Asia/Kolkata")
-            )
-
-    except Exception:
-
-        pass
-
+    # last_timestamp was already normalized and validated above.
 
     last_updated = (
         last_timestamp.strftime(
@@ -1511,8 +1550,10 @@ def get_live_stock_data(stock_name):
         Outside market hours:
             Latest daily closing price.
 
-        If intraday fails:
-            Automatically fall back to daily data.
+        If intraday fails during market hours:
+            DO NOT fall back to a previous-day price.
+            Raise an error so the dashboard shows that the
+            live price is unavailable.
 
     Historical database is NOT modified.
     """
@@ -1580,6 +1621,9 @@ def get_live_stock_data(stock_name):
 
     if is_market_open(now):
 
+        # During market hours, NEVER substitute an EOD/previous-day
+        # price when the live feed fails. A stale collateral price
+        # is more dangerous than an explicit unavailable status.
         try:
 
             return get_intraday_market_data(
@@ -1590,7 +1634,7 @@ def get_live_stock_data(stock_name):
         except Exception as intraday_error:
 
             print(
-                f"⚠️ Intraday data unavailable "
+                f"⚠️ LIVE intraday data unavailable "
                 f"for {stock_name}"
             )
 
@@ -1598,9 +1642,10 @@ def get_live_stock_data(stock_name):
                 f"Reason: {intraday_error}"
             )
 
-            print(
-                "Attempting daily close fallback..."
-            )
+            raise Exception(
+                f"Live market price unavailable for {stock_name}. "
+                f"No previous-day price will be used during market hours."
+            ) from intraday_error
 
 
     # ========================================================

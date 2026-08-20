@@ -1171,6 +1171,47 @@ else:
 st.subheader("🚨 Immediate Attention Required")
 
 
+# ------------------------------------------------------------
+# LIVE MARKET DATA / COLLATERAL ATTENTION
+# ------------------------------------------------------------
+
+# Securities for which a genuine live price is not available.
+# Do NOT treat an old closing price as a live price.
+missing_live = live_df[
+    live_df["price"].isna()
+].copy()
+
+
+# ------------------------------------------------------------
+# MISSING LIVE MARKET DATA
+# ------------------------------------------------------------
+
+if not missing_live.empty:
+
+    missing_securities = (
+        missing_live["security"]
+        .dropna()
+        .astype(str)
+        .tolist()
+    )
+
+    if len(missing_securities) == 1:
+        missing_text = missing_securities[0]
+    else:
+        missing_text = ", ".join(missing_securities)
+
+    st.warning(
+        "⚠️ Live market data incomplete. "
+        f"Live price is currently unavailable for: {missing_text}. "
+        "Borrower-level collateral cover cannot be fully assessed "
+        "until live market data is available for all securities."
+    )
+
+
+# ------------------------------------------------------------
+# LIVE COLLATERAL SHORTFALL
+# ------------------------------------------------------------
+
 critical_live = live_df[
     live_df["cover"].notna()
     &
@@ -1189,7 +1230,6 @@ if not critical_live.empty:
         "below required cover."
     )
 
-
     critical_view = critical_live[
         [
             "date",
@@ -1202,30 +1242,25 @@ if not critical_live.empty:
         ]
     ].copy()
 
-
     critical_view["date"] = (
         critical_view["date"]
         .dt.strftime("%d-%b-%Y")
     )
-
 
     critical_view["cover"] = (
         critical_view["cover"]
         .apply(format_cover)
     )
 
-
     critical_view["required_cover"] = (
         critical_view["required_cover"]
         .apply(format_cover)
     )
 
-
     critical_view["buffer"] = (
         critical_view["buffer"]
         .apply(format_cover)
     )
-
 
     st.dataframe(
         critical_view,
@@ -1234,12 +1269,11 @@ if not critical_live.empty:
     )
 
 
-else:
+elif missing_live.empty:
 
     st.success(
         "No live collateral shortfall detected."
     )
-
 
 # ============================================================
 # 4. LIVE MARKET MOVEMENT MONITORING
