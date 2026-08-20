@@ -1276,87 +1276,542 @@ elif missing_live.empty:
     )
 
 # ============================================================
-# 4. LIVE MARKET MOVEMENT MONITORING
+# 4. SECURITY MARKET CHARTS
 # ============================================================
 
-st.subheader("📉 Market Movement Monitoring")
+st.subheader(
+    "📈 Security Market Charts"
+)
 
+st.caption(
+    "Interactive market-price analysis for securities "
+    "currently included in the loan/security master."
+)
 
-market_view = live_df[
-    [
-        "date",
-        "borrower",
-        "security",
-        "price",
-        "previous_close",
-        "daily_change_%",
-        "market_alert",
+# ------------------------------------------------------------
+# BUILD SECURITY LIST DYNAMICALLY
+# ------------------------------------------------------------
+
+chart_securities = (
+    live_df[
+        [
+            "security",
+            "nse_symbol"
+        ]
     ]
-].copy()
-
-
-market_view = market_view.sort_values(
-    ["borrower", "security"]
+    .dropna(
+        subset=[
+            "security",
+            "nse_symbol"
+        ]
+    )
+    .copy()
 )
 
+chart_securities[
+    "security"
+] = chart_securities[
+    "security"
+].astype(str).str.strip()
 
-market_view = market_view.rename(
-    columns={
-        "date": "date",
-        "borrower": "borrower",
-        "security": "security",
-        "price": "price",
-        "previous_close": "previous_close",
-        "daily_change_%": "daily_change_%",
-        "market_alert": "market_alert",
-    }
-)
+chart_securities[
+    "nse_symbol"
+] = chart_securities[
+    "nse_symbol"
+].astype(str).str.strip()
 
-
-market_view["date"] = (
-    market_view["date"]
-    .dt.strftime("%d-%b-%Y")
-)
-
-
-market_view["price"] = (
-    market_view["price"]
-    .apply(
-        lambda x:
-        f"₹{x:,.2f}"
-        if pd.notna(x)
-        else "Unavailable"
+chart_securities = (
+    chart_securities[
+        (chart_securities["security"] != "")
+        &
+        (chart_securities["nse_symbol"] != "")
+    ]
+    .drop_duplicates(
+        subset=[
+            "security"
+        ]
+    )
+    .sort_values(
+        "security"
+    )
+    .reset_index(
+        drop=True
     )
 )
 
+# ------------------------------------------------------------
+# NO SECURITIES
+# ------------------------------------------------------------
 
-market_view["previous_close"] = (
-    market_view["previous_close"]
-    .apply(
-        lambda x:
-        f"₹{x:,.2f}"
-        if pd.notna(x)
-        else "—"
+if chart_securities.empty:
+
+    st.info(
+        "No securities are currently available "
+        "for market chart monitoring."
     )
-)
 
+else:
 
-market_view["daily_change_%"] = (
-    market_view["daily_change_%"]
-    .apply(
-        lambda x:
-        f"{x:+.2f}%"
-        if pd.notna(x)
-        else "—"
+    # --------------------------------------------------------
+    # SECURITY SELECTOR
+    # --------------------------------------------------------
+
+    selected_security = st.selectbox(
+        "Security",
+        chart_securities[
+            "security"
+        ].tolist(),
+        key="market_chart_security"
     )
-)
+
+    selected_row = chart_securities[
+        chart_securities["security"]
+        == selected_security
+    ].iloc[0]
+
+    selected_symbol = str(
+        selected_row[
+            "nse_symbol"
+        ]
+    ).strip()
+
+    yahoo_symbol = (
+        selected_symbol
+        + ".NS"
+    )
+
+    # --------------------------------------------------------
+    # PERIOD + CHART TYPE
+    # --------------------------------------------------------
+
+    period_col, chart_type_col = st.columns(
+        [1, 1]
+    )
+
+    with period_col:
+
+        selected_period = st.radio(
+            "Period",
+            [
+                "1D",
+                "1W",
+                "1M",
+                "1Y",
+                "5Y",
+            ],
+            horizontal=True,
+            key="market_chart_period"
+        )
+
+    with chart_type_col:
+
+        selected_chart_type = st.radio(
+            "Chart Type",
+            [
+                "Line",
+                "Candlestick",
+                "Area",
+            ],
+            horizontal=True,
+            key="market_chart_type"
+        )
+
+    # --------------------------------------------------------
+    # CURRENT MARKET DATA
+    # --------------------------------------------------------
+
+    try:
+
+        selected_market_data = (
+            get_live_stock_data(
+                selected_symbol
+            )
+        )
+
+    except Exception:
+
+        selected_market_data = None
+
+    current_price = None
+    previous_close = None
+    daily_change = None
+
+    if selected_market_data:
+
+        current_price = (
+            selected_market_data.get(
+                "price"
+            )
+        )
+
+        previous_close = (
+            selected_market_data.get(
+                "previous_close"
+            )
+        )
+
+        daily_change = (
+            selected_market_data.get(
+                "daily_change_%"
+            )
+        )
+
+    # --------------------------------------------------------
+    # METRICS
+    # --------------------------------------------------------
+
+    metric_1, metric_2, metric_3 = st.columns(
+        3
+    )
+
+    with metric_1:
+
+        if (
+            current_price is not None
+            and pd.notna(current_price)
+        ):
+
+            st.metric(
+                "Current Price",
+                f"₹{float(current_price):,.2f}"
+            )
+
+        else:
+
+            st.metric(
+                "Current Price",
+                "Unavailable"
+            )
+
+    with metric_2:
+
+        if (
+            previous_close is not None
+            and pd.notna(previous_close)
+        ):
+
+            st.metric(
+                "Previous Close",
+                f"₹{float(previous_close):,.2f}"
+            )
+
+        else:
+
+            st.metric(
+                "Previous Close",
+                "Unavailable"
+            )
+
+    with metric_3:
+
+        if (
+            daily_change is not None
+            and pd.notna(daily_change)
+        ):
+
+            st.metric(
+                "Today's Change",
+                f"{float(daily_change):+.2f}%"
+            )
+
+        else:
+
+            st.metric(
+                "Today's Change",
+                "Unavailable"
+            )
+
+    # --------------------------------------------------------
+    # FETCH HISTORICAL MARKET DATA
+    # --------------------------------------------------------
+
+    try:
+
+        from modules.market_data import (
+            get_market_chart_data
+        )
+
+        chart_data = (
+            get_market_chart_data(
+                yahoo_symbol,
+                period=selected_period,
+                stock_display_name=selected_security
+            )
+        )
+
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+
+        # ----------------------------------------------------
+        # CREATE CHART WITH VOLUME
+        # ----------------------------------------------------
+
+        fig = make_subplots(
+            rows=2,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.04,
+            row_heights=[
+                0.78,
+                0.22
+            ]
+        )
+
+        # ----------------------------------------------------
+        # CANDLESTICK
+        # ----------------------------------------------------
+
+        if selected_chart_type == "Candlestick":
+
+            fig.add_trace(
+                go.Candlestick(
+                    x=chart_data["datetime"],
+
+                    open=chart_data["open"],
+
+                    high=chart_data["high"],
+
+                    low=chart_data["low"],
+
+                    close=chart_data["close"],
+
+                    name=selected_symbol,
+
+                    increasing_line_color="#16a34a",
+
+                    decreasing_line_color="#dc2626",
+
+                    increasing_fillcolor="#16a34a",
+
+                    decreasing_fillcolor="#dc2626",
+
+                ),
+                row=1,
+                col=1
+            )
+
+        # ----------------------------------------------------
+        # AREA
+        # ----------------------------------------------------
+
+        elif selected_chart_type == "Area":
+
+            fig.add_trace(
+                go.Scatter(
+                    x=chart_data["datetime"],
+
+                    y=chart_data["close"],
+
+                    mode="lines",
+
+                    name=selected_symbol,
+
+                    line=dict(
+                        color="#2563eb",
+                        width=2
+                    ),
+
+                    fill="tozeroy",
+
+                    fillcolor=(
+                        "rgba(37, 99, 235, 0.16)"
+                    ),
+                ),
+                row=1,
+                col=1
+            )
+
+        # ----------------------------------------------------
+        # LINE
+        # ----------------------------------------------------
+
+        else:
+
+            fig.add_trace(
+                go.Scatter(
+                    x=chart_data["datetime"],
+
+                    y=chart_data["close"],
+
+                    mode="lines",
+
+                    name=selected_symbol,
+
+                    line=dict(
+                        color="#2563eb",
+                        width=2
+                    ),
+
+                    hovertemplate=(
+                        "<b>%{x}</b>"
+                        "<br>Price: ₹%{y:,.2f}"
+                        "<extra></extra>"
+                    ),
+                ),
+                row=1,
+                col=1
+            )
+
+        # ----------------------------------------------------
+        # VOLUME
+        # ----------------------------------------------------
+
+        volume_data = chart_data.copy()
+
+        volume_data[
+            "volume"
+        ] = volume_data[
+            "volume"
+        ].fillna(0)
+
+        fig.add_trace(
+            go.Bar(
+                x=volume_data["datetime"],
+
+                y=volume_data["volume"],
+
+                name="Volume",
+
+                marker_color=(
+                    "rgba(100, 116, 139, 0.45)"
+                ),
+
+                hovertemplate=(
+                    "<b>%{x}</b>"
+                    "<br>Volume: %{y:,.0f}"
+                    "<extra></extra>"
+                ),
+            ),
+            row=2,
+            col=1
+        )
+
+        # ----------------------------------------------------
+        # CURRENT PRICE LINE
+        # ----------------------------------------------------
+
+        if (
+            current_price is not None
+            and pd.notna(current_price)
+        ):
+
+            fig.add_hline(
+                y=float(current_price),
+
+                line_dash="dot",
+
+                line_width=1,
+
+                line_color="#64748b",
+
+                annotation_text=(
+                    f"₹{float(current_price):,.2f}"
+                ),
+
+                annotation_position="top right",
+
+                row=1,
+                col=1
+            )
+
+        # ----------------------------------------------------
+        # LAYOUT
+        # ----------------------------------------------------
+
+        fig.update_layout(
+
+            title=(
+                f"{selected_security} "
+                f"({selected_symbol})"
+            ),
+
+            height=650,
+
+            hovermode="x unified",
+
+            template="plotly_white",
+
+            margin=dict(
+                l=55,
+                r=30,
+                t=70,
+                b=40
+            ),
+
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.01,
+                xanchor="right",
+                x=1
+            ),
+
+            xaxis_rangeslider_visible=(
+                selected_chart_type
+                == "Candlestick"
+            ),
+
+            dragmode="zoom",
+
+            showlegend=True
+        )
+
+        fig.update_yaxes(
+            title_text="Price (₹)",
+            row=1,
+            col=1,
+            fixedrange=False
+        )
+
+        fig.update_yaxes(
+            title_text="Volume",
+            row=2,
+            col=1,
+            fixedrange=False
+        )
+
+        fig.update_xaxes(
+            showgrid=True,
+            rangeslider=dict(
+                visible=False
+            ),
+            row=2,
+            col=1
+        )
+
+        st.plotly_chart(
+            fig,
+            width="stretch",
+            config={
+                "displaylogo": False,
+
+                "scrollZoom": True,
+
+                "displayModeBar": True,
+
+                "modeBarButtonsToRemove": [
+                    "lasso2d",
+                    "select2d"
+                ],
+            }
+        )
+
+        st.caption(
+            f"{selected_security} "
+            f"({selected_symbol}) · "
+            f"{selected_period} · "
+            f"{selected_chart_type}"
+        )
+
+    except Exception as chart_error:
+
+        st.warning(
+            f"Market chart unavailable "
+            f"for {selected_security}: "
+            f"{chart_error}"
+        )
 
 
-st.dataframe(
-    market_view,
-    width="stretch",
-    hide_index=True,
-)
 
 # ============================================================
 # 5. LIVE COLLATERAL STRESS TESTING

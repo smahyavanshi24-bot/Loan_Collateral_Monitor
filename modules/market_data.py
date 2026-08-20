@@ -2287,3 +2287,234 @@ if __name__ == "__main__":
             print(
                 f"Reason: {e}"
             )
+
+# ============================================================
+# GET MARKET CHART DATA
+# ============================================================
+
+def get_market_chart_data(
+    yahoo_symbol,
+    period="1D",
+    stock_display_name=None
+):
+    """
+    Return historical market data for the dashboard chart.
+
+    Supported periods:
+        1D = 1-minute
+        1W = 15-minute
+        1M = 1-hour
+        1Y = daily
+        5Y = daily
+
+    This function is READ-ONLY.
+    It does not modify the collateral database.
+    """
+
+    display_name = (
+        stock_display_name
+        or yahoo_symbol
+    )
+
+    period_settings = {
+
+        "1D": {
+            "period": "1d",
+            "interval": "1m",
+        },
+
+        "1W": {
+            "period": "5d",
+            "interval": "15m",
+        },
+
+        "1M": {
+            "period": "1mo",
+            "interval": "1h",
+        },
+
+        "1Y": {
+            "period": "1y",
+            "interval": "1d",
+        },
+
+        "5Y": {
+            "period": "5y",
+            "interval": "1d",
+        },
+    }
+
+    if period not in period_settings:
+
+        raise ValueError(
+            f"Unsupported chart period: {period}"
+        )
+
+    settings = period_settings[
+        period
+    ]
+
+    try:
+
+        stock = yf.Ticker(
+            yahoo_symbol
+        )
+
+        data = stock.history(
+            period=settings["period"],
+            interval=settings["interval"],
+            auto_adjust=False,
+            prepost=False
+        )
+
+        if (
+            data is None
+            or data.empty
+        ):
+
+            raise Exception(
+                f"No market history received "
+                f"for {display_name}"
+            )
+
+        data = data.reset_index()
+
+        # ----------------------------------------------------
+        # TIMESTAMP COLUMN
+        # ----------------------------------------------------
+
+        timestamp_column = None
+
+        for column in [
+            "Datetime",
+            "Date"
+        ]:
+
+            if column in data.columns:
+
+                timestamp_column = column
+                break
+
+        if timestamp_column is None:
+
+            raise Exception(
+                f"Market timestamp unavailable "
+                f"for {display_name}"
+            )
+
+        # ----------------------------------------------------
+        # REQUIRED COLUMNS
+        # ----------------------------------------------------
+
+        required_columns = [
+            timestamp_column,
+            "Open",
+            "High",
+            "Low",
+            "Close",
+            "Volume",
+        ]
+
+        missing_columns = [
+            column
+            for column in required_columns
+            if column not in data.columns
+        ]
+
+        if missing_columns:
+
+            raise Exception(
+                f"Missing market columns "
+                f"for {display_name}: "
+                f"{missing_columns}"
+            )
+
+        result = data[
+            required_columns
+        ].copy()
+
+        result = result.rename(
+            columns={
+                timestamp_column:
+                    "datetime",
+
+                "Open":
+                    "open",
+
+                "High":
+                    "high",
+
+                "Low":
+                    "low",
+
+                "Close":
+                    "close",
+
+                "Volume":
+                    "volume",
+            }
+        )
+
+        # ----------------------------------------------------
+        # CLEAN NUMERIC DATA
+        # ----------------------------------------------------
+
+        result["datetime"] = pd.to_datetime(
+            result["datetime"],
+            errors="coerce"
+        )
+
+        for column in [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ]:
+
+            result[column] = pd.to_numeric(
+                result[column],
+                errors="coerce"
+            )
+
+        result = result.dropna(
+            subset=[
+                "datetime",
+                "open",
+                "high",
+                "low",
+                "close",
+            ]
+        )
+
+        result = result[
+            result["close"] > 0
+        ]
+
+        result = result.sort_values(
+            "datetime"
+        )
+
+        result = result.drop_duplicates(
+            subset=[
+                "datetime"
+            ]
+        )
+
+        if result.empty:
+
+            raise Exception(
+                f"No valid market history "
+                f"available for {display_name}"
+            )
+
+        return result.reset_index(
+            drop=True
+        )
+
+    except Exception as e:
+
+        raise Exception(
+            f"Unable to retrieve chart data "
+            f"for {display_name}: {e}"
+        ) from e
