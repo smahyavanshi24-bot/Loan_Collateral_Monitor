@@ -1279,13 +1279,11 @@ elif missing_live.empty:
 # 4. SECURITY MARKET CHARTS
 # ============================================================
 
-st.subheader(
-    "📈 Security Market Charts"
-)
+st.subheader("📈 Security Market Charts")
 
 st.caption(
-    "Interactive market-price analysis for securities "
-    "currently included in the loan/security master."
+    "Interactive market-price analysis for securities currently included "
+    "in the loan/security master."
 )
 
 # ------------------------------------------------------------
@@ -1308,17 +1306,17 @@ chart_securities = (
     .copy()
 )
 
-chart_securities[
-    "security"
-] = chart_securities[
-    "security"
-].astype(str).str.strip()
+chart_securities["security"] = (
+    chart_securities["security"]
+    .astype(str)
+    .str.strip()
+)
 
-chart_securities[
-    "nse_symbol"
-] = chart_securities[
-    "nse_symbol"
-].astype(str).str.strip()
+chart_securities["nse_symbol"] = (
+    chart_securities["nse_symbol"]
+    .astype(str)
+    .str.strip()
+)
 
 chart_securities = (
     chart_securities[
@@ -1327,21 +1325,11 @@ chart_securities = (
         (chart_securities["nse_symbol"] != "")
     ]
     .drop_duplicates(
-        subset=[
-            "security"
-        ]
+        subset=["security"]
     )
-    .sort_values(
-        "security"
-    )
-    .reset_index(
-        drop=True
-    )
+    .sort_values("security")
+    .reset_index(drop=True)
 )
-
-# ------------------------------------------------------------
-# NO SECURITIES
-# ------------------------------------------------------------
 
 if chart_securities.empty:
 
@@ -1352,96 +1340,157 @@ if chart_securities.empty:
 
 else:
 
-    # --------------------------------------------------------
-    # SECURITY SELECTOR
-    # --------------------------------------------------------
-
     selected_security = st.selectbox(
         "Security",
-        chart_securities[
-            "security"
-        ].tolist(),
+        chart_securities["security"].tolist(),
         key="market_chart_security"
     )
 
     selected_row = chart_securities[
-        chart_securities["security"]
-        == selected_security
+        chart_securities["security"] == selected_security
     ].iloc[0]
 
     selected_symbol = str(
-        selected_row[
-            "nse_symbol"
-        ]
+        selected_row["nse_symbol"]
     ).strip()
 
-    yahoo_symbol = (
-        selected_symbol
-        + ".NS"
-    )
+    yahoo_symbol = selected_symbol + ".NS"
 
     # --------------------------------------------------------
-    # PERIOD + CHART TYPE
+    # PROFESSIONAL CHART CONTROLS
     # --------------------------------------------------------
 
-    period_col, chart_type_col = st.columns(
-        [1, 1]
-    )
+    control_left, control_right = st.columns([1.15, 1])
 
-    with period_col:
+    with control_left:
 
         selected_period = st.radio(
             "Period",
-            [
-                "1D",
-                "1W",
-                "1M",
-                "1Y",
-                "5Y",
-            ],
+            ["1D", "1W", "1M", "1Y", "5Y"],
             horizontal=True,
             key="market_chart_period"
         )
 
-    with chart_type_col:
+    with control_right:
 
         selected_chart_type = st.radio(
             "Chart Type",
-            [
-                "Line",
-                "Candlestick",
-                "Area",
-            ],
+            ["Line", "Candlestick", "Area"],
             horizontal=True,
             key="market_chart_type"
         )
 
+            # --------------------------------------------------------
+    # CURRENT / LATEST MARKET DATA
     # --------------------------------------------------------
-    # CURRENT MARKET DATA
+    #
+    # IMPORTANT:
+    #
+    # Live market data is required for collateral calculations.
+    # This section is ONLY for the selected-security information
+    # panel.
+    #
+    # If live intraday data is unavailable:
+    #     - fetch latest verified NSE EOD close
+    #     - clearly label it as "Latest NSE Close"
+    #     - NEVER call it "Current Price"
+    #     - NEVER use it as today's collateral price
+    #
+    # --------------------------------------------------------
+
+    from modules.market_data import (
+        get_live_stock_data,
+        get_daily_market_data,
+    )
+
+    selected_market_data = None
+    fallback_market_data = None
+
+    market_is_live = False
+    market_data_source = "Unavailable"
+
+    # --------------------------------------------------------
+    # 1. TRY LIVE MARKET DATA
     # --------------------------------------------------------
 
     try:
 
-        selected_market_data = (
-            get_live_stock_data(
-                selected_symbol
-            )
+        selected_market_data = get_live_stock_data(
+            selected_symbol
         )
+
+        if (
+            selected_market_data
+            and selected_market_data.get("price") is not None
+        ):
+
+            market_is_live = True
+            market_data_source = (
+                selected_market_data.get(
+                    "source",
+                    "Live market data"
+                )
+            )
 
     except Exception:
 
         selected_market_data = None
+        market_is_live = False
+
+    # --------------------------------------------------------
+    # 2. FALL BACK TO VERIFIED NSE EOD DATA
+    # --------------------------------------------------------
+    #
+    # This is DISPLAY ONLY.
+    #
+    # It must never become the live collateral price.
+    # --------------------------------------------------------
+
+    if not market_is_live:
+
+        try:
+
+            fallback_market_data = get_daily_market_data(
+                selected_symbol,
+                stock_display_name=selected_security,
+            )
+
+            if (
+                fallback_market_data
+                and fallback_market_data.get("price") is not None
+            ):
+
+                market_data_source = (
+                    fallback_market_data.get(
+                        "source",
+                        "NSE Bhavcopy EOD"
+                    )
+                )
+
+        except Exception:
+
+            fallback_market_data = None
+
+    # --------------------------------------------------------
+    # 3. INITIALISE DISPLAY VALUES
+    # --------------------------------------------------------
 
     current_price = None
     previous_close = None
     daily_change = None
+    week_52_low = None
+    week_52_high = None
+    market_cap = None
+    market_data_time = None
 
-    if selected_market_data:
+    # --------------------------------------------------------
+    # 4. LIVE DATA AVAILABLE
+    # --------------------------------------------------------
+
+    if market_is_live:
 
         current_price = (
-            selected_market_data.get(
-                "price"
-            )
+            selected_market_data.get("price")
         )
 
         previous_close = (
@@ -1456,73 +1505,77 @@ else:
             )
         )
 
+        week_52_low = (
+            selected_market_data.get(
+                "52_week_low"
+            )
+        )
+
+        week_52_high = (
+            selected_market_data.get(
+                "52_week_high"
+            )
+        )
+
+        market_cap = (
+            selected_market_data.get(
+                "market_cap"
+            )
+        )
+
+        market_data_time = (
+            selected_market_data.get(
+                "last_updated"
+            )
+        )
+
     # --------------------------------------------------------
-    # METRICS
+    # 5. LIVE DATA UNAVAILABLE
+    # --------------------------------------------------------
+    #
+    # Use EOD ONLY for market-information display.
+    #
+    # Do NOT populate current_price from the fallback.
+    #
+    # This is intentional.
     # --------------------------------------------------------
 
-    metric_1, metric_2, metric_3 = st.columns(
-        3
-    )
+    else:
 
-    with metric_1:
+        if fallback_market_data:
 
-        if (
-            current_price is not None
-            and pd.notna(current_price)
-        ):
+            fallback_price = (
+                fallback_market_data.get(
+                    "price"
+                )
+            )
 
-            st.metric(
-                "Current Price",
-                f"₹{float(current_price):,.2f}"
+            fallback_date = (
+                fallback_market_data.get(
+                    "last_updated"
+                )
+            )
+
+            # Keep the fallback price separate.
+            #
+            # We do NOT assign it to current_price.
+            #
+
+            latest_verified_close = (
+                fallback_price
+            )
+
+            latest_verified_close_date = (
+                fallback_date
             )
 
         else:
 
-            st.metric(
-                "Current Price",
-                "Unavailable"
-            )
-
-    with metric_2:
-
-        if (
-            previous_close is not None
-            and pd.notna(previous_close)
-        ):
-
-            st.metric(
-                "Previous Close",
-                f"₹{float(previous_close):,.2f}"
-            )
-
-        else:
-
-            st.metric(
-                "Previous Close",
-                "Unavailable"
-            )
-
-    with metric_3:
-
-        if (
-            daily_change is not None
-            and pd.notna(daily_change)
-        ):
-
-            st.metric(
-                "Today's Change",
-                f"{float(daily_change):+.2f}%"
-            )
-
-        else:
-
-            st.metric(
-                "Today's Change",
-                "Unavailable"
-            )
+            latest_verified_close = None
+            latest_verified_close_date = None
 
     # --------------------------------------------------------
-    # FETCH HISTORICAL MARKET DATA
+    # 6. FETCH / PREPARE HISTORICAL CHART DATA
     # --------------------------------------------------------
 
     try:
@@ -1531,117 +1584,685 @@ else:
             get_market_chart_data
         )
 
+        chart_data = get_market_chart_data(
+            yahoo_symbol,
+            period=selected_period,
+            stock_display_name=selected_security
+        )
+
+        if (
+            chart_data is None
+            or chart_data.empty
+        ):
+
+            raise ValueError(
+                f"No market history received "
+                f"for {selected_security}"
+            )
+
+        import plotly.graph_objects as go
+
+        from plotly.subplots import make_subplots
+
+        chart_data = chart_data.copy()
+
+        chart_data["datetime"] = pd.to_datetime(
+            chart_data["datetime"],
+            errors="coerce"
+        )
+
+        chart_data = chart_data[
+            chart_data["datetime"].notna()
+        ].copy()
+
+        for column in [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ]:
+
+            if column in chart_data.columns:
+
+                chart_data[column] = (
+                    pd.to_numeric(
+                        chart_data[column],
+                        errors="coerce"
+                    )
+                )
+
         chart_data = (
-            get_market_chart_data(
-                yahoo_symbol,
-                period=selected_period,
-                stock_display_name=selected_security
+            chart_data
+            .dropna(
+                subset=["close"]
+            )
+            .reset_index(
+                drop=True
             )
         )
 
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
+        if chart_data.empty:
+
+            raise ValueError(
+                f"No valid market history received "
+                f"for {selected_security}"
+            )
 
         # ----------------------------------------------------
-        # CREATE CHART WITH VOLUME
+        # 52-WEEK HIGH / LOW
+        # ----------------------------------------------------
+
+        if (
+            week_52_low is None
+            or pd.isna(week_52_low)
+        ):
+
+            low_values = (
+                pd.to_numeric(
+                    chart_data["low"],
+                    errors="coerce"
+                )
+                .dropna()
+            )
+
+            if not low_values.empty:
+
+                week_52_low = float(
+                    low_values.min()
+                )
+
+        if (
+            week_52_high is None
+            or pd.isna(week_52_high)
+        ):
+
+            high_values = (
+                pd.to_numeric(
+                    chart_data["high"],
+                    errors="coerce"
+                )
+                .dropna()
+            )
+
+            if not high_values.empty:
+
+                week_52_high = float(
+                    high_values.max()
+                )
+
+        # ----------------------------------------------------
+        # FORMAT HELPERS
+        # ----------------------------------------------------
+
+        def _money(value):
+
+            if (
+                value is None
+                or pd.isna(value)
+            ):
+
+                return "—"
+
+            return (
+                f"₹{float(value):,.2f}"
+            )
+
+        def _percent(value):
+
+            if (
+                value is None
+                or pd.isna(value)
+            ):
+
+                return "—"
+
+            return (
+                f"{float(value):+.2f}%"
+            )
+
+        def _compact_number(value):
+
+            if (
+                value is None
+                or pd.isna(value)
+            ):
+
+                return "—"
+
+            value = float(value)
+
+            if abs(value) >= 1_000_000_000:
+
+                return (
+                    f"{value / 1_000_000_000:.2f}B"
+                )
+
+            if abs(value) >= 1_000_000:
+
+                return (
+                    f"{value / 1_000_000:.2f}M"
+                )
+
+            if abs(value) >= 1_000:
+
+                return (
+                    f"{value / 1_000:.1f}K"
+                )
+
+            return f"{value:,.0f}"
+
+        # ----------------------------------------------------
+        # DISPLAY VALUES
+        # ----------------------------------------------------
+
+        if market_is_live:
+
+            current_text = _money(
+                current_price
+            )
+
+            previous_text = _money(
+                previous_close
+            )
+
+            change_text = _percent(
+                daily_change
+            )
+
+            absolute_change = None
+
+            if (
+                current_price is not None
+                and previous_close is not None
+                and pd.notna(current_price)
+                and pd.notna(previous_close)
+            ):
+
+                absolute_change = (
+                    float(current_price)
+                    - float(previous_close)
+                )
+
+            absolute_change_text = (
+                f"{absolute_change:+.2f}"
+                if absolute_change is not None
+                else "—"
+            )
+
+            price_card_label = (
+                "Current Price"
+            )
+
+            price_card_sub = (
+                str(market_data_time)
+                if market_data_time
+                else "Live market data"
+            )
+
+        else:
+
+            current_text = "—"
+
+            previous_text = "—"
+
+            change_text = "—"
+
+            absolute_change_text = "—"
+
+            price_card_label = (
+                "Latest NSE Close"
+            )
+
+            price_card_sub = (
+                (
+                    f"{latest_verified_close_date}"
+                    if latest_verified_close_date
+                    else "Latest verified close unavailable"
+                )
+                + "<br>"
+                + "<span style='color:#b45309;'>"
+                + "Live intraday unavailable"
+                + "</span>"
+            )
+
+        # ----------------------------------------------------
+        # CHANGE COLOUR
+        # ----------------------------------------------------
+
+        if (
+            market_is_live
+            and daily_change is not None
+            and pd.notna(daily_change)
+        ):
+
+            change_class = (
+                "market-card-change-positive"
+                if float(daily_change) >= 0
+                else "market-card-change-negative"
+            )
+
+            change_icon = (
+                "▲"
+                if float(daily_change) >= 0
+                else "▼"
+            )
+
+        else:
+
+            change_class = ""
+            change_icon = ""
+
+        # ----------------------------------------------------
+        # 52-WEEK RANGE
+        # ----------------------------------------------------
+
+        if (
+            week_52_low is not None
+            and pd.notna(week_52_low)
+            and week_52_high is not None
+            and pd.notna(week_52_high)
+        ):
+
+            range_text = (
+                f"{_money(week_52_low)}"
+                f" &nbsp;—&nbsp; "
+                f"{_money(week_52_high)}"
+            )
+
+        else:
+
+            range_text = (
+                "52-week range unavailable"
+            )
+
+        # ----------------------------------------------------
+        # PROFESSIONAL MARKET CARD / CHART CSS
+        # ----------------------------------------------------
+
+        st.html(
+            """
+            <style>
+
+            .market-card-row {
+                display: grid;
+                grid-template-columns:
+                    repeat(4, minmax(0, 1fr));
+                gap: 14px;
+                margin: 18px 0 18px 0;
+            }
+
+            .market-card {
+                border: 1px solid #e5e7eb;
+                border-radius: 14px;
+                padding: 18px 20px;
+                min-height: 128px;
+                background: linear-gradient(
+                    145deg,
+                    #ffffff 0%,
+                    #f8fafc 100%
+                );
+                box-shadow:
+                    0 4px 16px rgba(15, 23, 42, 0.06);
+            }
+
+            .market-card.blue {
+                background: linear-gradient(
+                    145deg,
+                    #ffffff 0%,
+                    #eff6ff 100%
+                );
+            }
+
+            .market-card.green {
+                background: linear-gradient(
+                    145deg,
+                    #ffffff 0%,
+                    #f0fdf4 100%
+                );
+            }
+
+            .market-card.orange {
+                background: linear-gradient(
+                    145deg,
+                    #ffffff 0%,
+                    #fffbeb 100%
+                );
+            }
+
+            .market-card.purple {
+                background: linear-gradient(
+                    145deg,
+                    #ffffff 0%,
+                    #faf5ff 100%
+                );
+            }
+
+            .market-card-label {
+                font-size: 12px;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                color: #64748b;
+                margin-bottom: 7px;
+            }
+
+            .market-card-value {
+                font-size: 27px;
+                line-height: 1.15;
+                font-weight: 750;
+                color: #0f172a;
+                margin-bottom: 7px;
+            }
+
+            .market-card-sub {
+                font-size: 13px;
+                color: #64748b;
+                line-height: 1.5;
+            }
+
+            .market-card-change-positive {
+                color: #16a34a;
+                font-weight: 700;
+            }
+
+            .market-card-change-negative {
+                color: #dc2626;
+                font-weight: 700;
+            }
+
+            .market-card-icon {
+                float: right;
+                width: 34px;
+                height: 34px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 17px;
+                background: #eff6ff;
+            }
+
+            .market-chart-shell {
+                border: 1px solid #e5e7eb;
+                border-radius: 16px;
+                background: #ffffff;
+                box-shadow:
+                    0 5px 18px rgba(15, 23, 42, 0.06);
+                padding: 8px 10px 2px 10px;
+                margin-top: 6px;
+            }
+
+            .market-chart-title {
+                padding: 12px 14px 4px 14px;
+                font-size: 19px;
+                font-weight: 750;
+                color: #0f172a;
+            }
+
+            .market-chart-subtitle {
+                padding: 0 14px 6px 14px;
+                font-size: 12px;
+                color: #64748b;
+            }
+
+            .market-stat-row {
+                display: grid;
+                grid-template-columns:
+                    repeat(6, minmax(0, 1fr));
+                gap: 9px;
+                margin: 10px 0 8px 0;
+            }
+
+            .market-stat {
+                border: 1px solid #eef2f7;
+                border-radius: 10px;
+                background: #f8fafc;
+                padding: 10px 12px;
+            }
+
+            .market-stat-label {
+                font-size: 11px;
+                color: #64748b;
+                margin-bottom: 4px;
+            }
+
+            .market-stat-value {
+                font-size: 14px;
+                font-weight: 700;
+                color: #0f172a;
+            }
+
+            .market-footer {
+                text-align: center;
+                color: #64748b;
+                font-size: 11px;
+                padding: 8px 0 10px 0;
+                border-top: 1px solid #eef2f7;
+                margin-top: 7px;
+            }
+
+            @media (max-width: 900px) {
+
+                .market-card-row {
+                    grid-template-columns:
+                        repeat(2, minmax(0, 1fr));
+                }
+
+                .market-stat-row {
+                    grid-template-columns:
+                        repeat(3, minmax(0, 1fr));
+                }
+
+            }
+
+            @media (max-width: 600px) {
+
+                .market-card-row,
+                .market-stat-row {
+                    grid-template-columns: 1fr;
+                }
+
+            }
+
+            </style>
+            """
+        )
+
+        # ----------------------------------------------------
+        # MARKET CARDS
+        # ----------------------------------------------------
+
+        st.html(
+            f"""
+            <div class="market-card-row">
+
+                <div class="market-card blue">
+
+                    <div class="market-card-icon">
+                        ₹
+                    </div>
+
+                    <div class="market-card-label">
+                        {price_card_label}
+                    </div>
+
+                    <div class="market-card-value">
+                        {
+                            current_text
+                            if market_is_live
+                            else (
+                                _money(
+                                    latest_verified_close
+                                )
+                                if latest_verified_close
+                                is not None
+                                else "—"
+                            )
+                        }
+                    </div>
+
+                    <div class="{change_class}">
+                        {change_icon}
+                        {absolute_change_text}
+                        {change_text}
+                    </div>
+
+                    <div class="market-card-sub">
+                        {price_card_sub}
+                    </div>
+
+                </div>
+
+
+                <div class="market-card green">
+
+                    <div class="market-card-icon">
+                        ▥
+                    </div>
+
+                    <div class="market-card-label">
+                        Previous Close
+                    </div>
+
+                    <div class="market-card-value">
+                        {previous_text}
+                    </div>
+
+                    <div class="market-card-sub">
+                        Previous trading session
+                    </div>
+
+                </div>
+
+
+                <div class="market-card orange">
+
+                    <div class="market-card-icon">
+                        ↗
+                    </div>
+
+                    <div class="market-card-label">
+                        Today's Change
+                    </div>
+
+                    <div class="market-card-value {change_class}">
+                        {change_icon}
+                        {change_text}
+                    </div>
+
+                    <div class="market-card-sub">
+                        {
+                            "Absolute move: ₹"
+                            + absolute_change_text
+                            if market_is_live
+                            else
+                            "Live intraday change unavailable"
+                        }
+                    </div>
+
+                </div>
+
+
+                <div class="market-card purple">
+
+                    <div class="market-card-icon">
+                        ◎
+                    </div>
+
+                    <div class="market-card-label">
+                        52 Week Range
+                    </div>
+
+                    <div
+                        class="market-card-value"
+                        style="font-size:19px;"
+                    >
+                        {range_text}
+                    </div>
+
+                    <div class="market-card-sub">
+                        Low to high market range
+                    </div>
+
+                </div>
+
+            </div>
+            """
+        )
+
+    
+        # ----------------------------------------------------
+        # CHART HEADER
+        # ----------------------------------------------------
+
+        st.html(
+            f"""
+            <div class="market-chart-shell">
+                <div class="market-chart-title">
+                    {selected_security} ({selected_symbol})
+                </div>
+                <div class="market-chart-subtitle">
+                    NSE: {selected_symbol}
+                    &nbsp; • &nbsp;
+                    {selected_period}
+                    &nbsp; • &nbsp;
+                    {selected_chart_type}
+                </div>
+            </div>
+            """
+        )
+
+        # ----------------------------------------------------
+        # CREATE PRICE + VOLUME CHART
         # ----------------------------------------------------
 
         fig = make_subplots(
             rows=2,
             cols=1,
             shared_xaxes=True,
-            vertical_spacing=0.04,
-            row_heights=[
-                0.78,
-                0.22
-            ]
+            vertical_spacing=0.025,
+            row_heights=[0.82, 0.18]
         )
-
-        # ----------------------------------------------------
-        # CANDLESTICK
-        # ----------------------------------------------------
 
         if selected_chart_type == "Candlestick":
 
             fig.add_trace(
                 go.Candlestick(
                     x=chart_data["datetime"],
-
                     open=chart_data["open"],
-
                     high=chart_data["high"],
-
                     low=chart_data["low"],
-
                     close=chart_data["close"],
-
                     name=selected_symbol,
-
                     increasing_line_color="#16a34a",
-
                     decreasing_line_color="#dc2626",
-
                     increasing_fillcolor="#16a34a",
-
                     decreasing_fillcolor="#dc2626",
-
+                    hoverlabel=dict(
+                        namelength=-1
+                    ),
                 ),
                 row=1,
                 col=1
             )
-
-        # ----------------------------------------------------
-        # AREA
-        # ----------------------------------------------------
 
         elif selected_chart_type == "Area":
 
             fig.add_trace(
                 go.Scatter(
                     x=chart_data["datetime"],
-
                     y=chart_data["close"],
-
                     mode="lines",
-
                     name=selected_symbol,
-
                     line=dict(
                         color="#2563eb",
-                        width=2
+                        width=2.2
                     ),
-
                     fill="tozeroy",
-
                     fillcolor=(
-                        "rgba(37, 99, 235, 0.16)"
+                        "rgba(37, 99, 235, 0.10)"
                     ),
-                ),
-                row=1,
-                col=1
-            )
-
-        # ----------------------------------------------------
-        # LINE
-        # ----------------------------------------------------
-
-        else:
-
-            fig.add_trace(
-                go.Scatter(
-                    x=chart_data["datetime"],
-
-                    y=chart_data["close"],
-
-                    mode="lines",
-
-                    name=selected_symbol,
-
-                    line=dict(
-                        color="#2563eb",
-                        width=2
-                    ),
-
                     hovertemplate=(
                         "<b>%{x}</b>"
                         "<br>Price: ₹%{y:,.2f}"
@@ -1652,30 +2273,71 @@ else:
                 col=1
             )
 
-        # ----------------------------------------------------
-        # VOLUME
-        # ----------------------------------------------------
+        else:
+
+            fig.add_trace(
+                go.Scatter(
+                    x=chart_data["datetime"],
+                    y=chart_data["close"],
+                    mode="lines",
+                    name=selected_symbol,
+                    line=dict(
+                        color="#2563eb",
+                        width=2.4
+                    ),
+                    hovertemplate=(
+                        "<b>%{x}</b>"
+                        "<br>Price: ₹%{y:,.2f}"
+                        "<extra></extra>"
+                    ),
+                ),
+                row=1,
+                col=1
+            )
 
         volume_data = chart_data.copy()
 
-        volume_data[
-            "volume"
-        ] = volume_data[
-            "volume"
-        ].fillna(0)
+        volume_data["volume"] = (
+            pd.to_numeric(
+                volume_data["volume"],
+                errors="coerce"
+            )
+            .fillna(0)
+        )
+
+        if len(volume_data) > 1:
+
+            previous_close_series = (
+                pd.to_numeric(
+                    volume_data["close"],
+                    errors="coerce"
+                ).shift(1)
+            )
+
+            volume_is_up = (
+                volume_data["close"]
+                >= previous_close_series
+            )
+
+        else:
+
+            volume_is_up = pd.Series(
+                [True] * len(volume_data)
+            )
+
+        volume_colors = [
+            "rgba(22, 163, 74, 0.55)"
+            if is_up
+            else "rgba(220, 38, 38, 0.55)"
+            for is_up in volume_is_up.fillna(True)
+        ]
 
         fig.add_trace(
             go.Bar(
                 x=volume_data["datetime"],
-
                 y=volume_data["volume"],
-
                 name="Volume",
-
-                marker_color=(
-                    "rgba(100, 116, 139, 0.45)"
-                ),
-
+                marker_color=volume_colors,
                 hovertemplate=(
                     "<b>%{x}</b>"
                     "<br>Volume: %{y:,.0f}"
@@ -1686,10 +2348,6 @@ else:
             col=1
         )
 
-        # ----------------------------------------------------
-        # CURRENT PRICE LINE
-        # ----------------------------------------------------
-
         if (
             current_price is not None
             and pd.notna(current_price)
@@ -1697,110 +2355,363 @@ else:
 
             fig.add_hline(
                 y=float(current_price),
-
                 line_dash="dot",
-
                 line_width=1,
-
                 line_color="#64748b",
-
                 annotation_text=(
                     f"₹{float(current_price):,.2f}"
                 ),
-
                 annotation_position="top right",
-
                 row=1,
                 col=1
             )
 
-        # ----------------------------------------------------
-        # LAYOUT
-        # ----------------------------------------------------
-
         fig.update_layout(
-
-            title=(
-                f"{selected_security} "
-                f"({selected_symbol})"
-            ),
-
-            height=650,
-
+            height=535,
             hovermode="x unified",
-
             template="plotly_white",
-
             margin=dict(
-                l=55,
-                r=30,
-                t=70,
-                b=40
+                l=48,
+                r=24,
+                t=12,
+                b=36
             ),
-
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.01,
-                xanchor="right",
-                x=1
-            ),
-
-            xaxis_rangeslider_visible=(
-                selected_chart_type
-                == "Candlestick"
-            ),
-
+            showlegend=False,
             dragmode="zoom",
-
-            showlegend=True
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font=dict(
+                family="Arial, sans-serif",
+                size=11,
+                color="#334155"
+            ),
+            xaxis_rangeslider_visible=False,
         )
 
         fig.update_yaxes(
-            title_text="Price (₹)",
+            title_text="Price",
+            title_font=dict(
+                size=11,
+                color="#64748b"
+            ),
             row=1,
             col=1,
-            fixedrange=False
+            fixedrange=False,
+            showgrid=True,
+            gridcolor="#e9eef5",
+            gridwidth=1,
+            zeroline=False,
+            tickprefix="₹",
+            tickformat=",.2f",
         )
 
         fig.update_yaxes(
             title_text="Volume",
-            row=2,
-            col=1,
-            fixedrange=False
-        )
-
-        fig.update_xaxes(
-            showgrid=True,
-            rangeslider=dict(
-                visible=False
+            title_font=dict(
+                size=10,
+                color="#64748b"
             ),
             row=2,
-            col=1
+            col=1,
+            fixedrange=False,
+            showgrid=False,
+            zeroline=False,
+            separatethousands=True,
         )
 
+        # ----------------------------------------------------
+        # CLEAN TRADING-DAY / TRADING-HOUR X-AXIS
+        # ----------------------------------------------------
+        # 1D = remove overnight hours + weekends
+        # Other periods = remove weekends only.
+
+        if selected_period == "1D":
+
+            x_rangebreaks = [
+                dict(
+                    bounds=["sat", "mon"]
+                ),
+                dict(
+                    bounds=[15.5, 9.25],
+                    pattern="hour"
+                ),
+            ]
+
+        else:
+
+            x_rangebreaks = [
+            dict(
+                bounds=["sat", "mon"]
+            )
+
+        ]
+
+            for chart_row in [1, 2]:
+
+                fig.update_xaxes(
+                    showgrid=False,
+                    showline=False,
+                    rangeslider=dict(
+                        visible=False
+                    ),
+                    fixedrange=False,
+                    rangebreaks=x_rangebreaks,
+                    row=chart_row,
+                    col=1
+                )
+
+           
         st.plotly_chart(
             fig,
             width="stretch",
             config={
                 "displaylogo": False,
-
                 "scrollZoom": True,
-
                 "displayModeBar": True,
-
+                "responsive": True,
                 "modeBarButtonsToRemove": [
                     "lasso2d",
-                    "select2d"
+                    "select2d",
                 ],
             }
         )
 
-        st.caption(
-            f"{selected_security} "
-            f"({selected_symbol}) · "
-            f"{selected_period} · "
-            f"{selected_chart_type}"
+
+                # ----------------------------------------------------
+        # MARKET STATISTICS
+        # ----------------------------------------------------
+        #
+        # These statistics represent the complete current
+        # trading session, rather than only the last candle.
+        # ----------------------------------------------------
+
+        session_data = chart_data.copy()
+
+        session_data["datetime"] = pd.to_datetime(
+            session_data["datetime"],
+            errors="coerce"
+        )
+
+        session_data = session_data[
+            session_data["datetime"].notna()
+        ].copy()
+
+        # ----------------------------------------------------
+        # NORMALIZE TIMEZONE TO IST
+        # ----------------------------------------------------
+
+        if session_data["datetime"].dt.tz is None:
+
+            session_data["datetime"] = (
+                session_data["datetime"]
+                .dt.tz_localize(
+                    "Asia/Kolkata"
+                )
+            )
+
+        else:
+
+            session_data["datetime"] = (
+                session_data["datetime"]
+                .dt.tz_convert(
+                    "Asia/Kolkata"
+                )
+            )
+
+        # ----------------------------------------------------
+        # KEEP TODAY'S TRADING SESSION
+        # ----------------------------------------------------
+
+        today_date = datetime.now(
+            ZoneInfo("Asia/Kolkata")
+        ).date()
+
+        today_session = session_data[
+            session_data["datetime"].dt.date
+            == today_date
+        ].copy()
+
+        # ----------------------------------------------------
+        # SAFETY FALLBACK
+        # ----------------------------------------------------
+        #
+        # If today's session is not present in the selected
+        # chart period, use the latest available trading day.
+        # ----------------------------------------------------
+
+        if today_session.empty:
+
+            latest_date = (
+                session_data["datetime"]
+                .dt.date
+                .max()
+            )
+
+            today_session = session_data[
+                session_data["datetime"].dt.date
+                == latest_date
+            ].copy()
+
+        # ----------------------------------------------------
+        # NUMERIC VALUES
+        # ----------------------------------------------------
+
+        for column in [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ]:
+
+            if column in today_session.columns:
+
+                today_session[column] = pd.to_numeric(
+                    today_session[column],
+                    errors="coerce"
+                )
+
+        # ----------------------------------------------------
+        # SESSION OPEN
+        # ----------------------------------------------------
+
+        open_series = (
+            today_session["open"]
+            .dropna()
+        )
+
+        open_value = (
+            float(open_series.iloc[0])
+            if not open_series.empty
+            else None
+        )
+
+        # ----------------------------------------------------
+        # SESSION HIGH
+        # ----------------------------------------------------
+
+        high_series = (
+            today_session["high"]
+            .dropna()
+        )
+
+        high_value = (
+            float(high_series.max())
+            if not high_series.empty
+            else None
+        )
+
+        # ----------------------------------------------------
+        # SESSION LOW
+        # ----------------------------------------------------
+
+        low_series = (
+            today_session["low"]
+            .dropna()
+        )
+
+        low_value = (
+            float(low_series.min())
+            if not low_series.empty
+            else None
+        )
+
+        # ----------------------------------------------------
+        # TOTAL SESSION VOLUME
+        # ----------------------------------------------------
+
+        volume_series = (
+            today_session["volume"]
+            .dropna()
+        )
+
+        latest_volume = (
+            float(volume_series.sum())
+            if not volume_series.empty
+            else None
+        )
+
+        # ----------------------------------------------------
+        # AVERAGE VOLUME
+        # ----------------------------------------------------
+
+        average_volume = (
+            float(
+                volume_series.tail(20).mean()
+            )
+            if not volume_series.empty
+            else None
+        )
+               
+        
+        market_cap_text = (
+            _compact_number(market_cap)
+            if market_cap is not None
+            and pd.notna(market_cap)
+            else "—"
+        )
+
+        st.html(
+            f"""
+            <div class="market-stat-row">
+
+                <div class="market-stat">
+                    <div class="market-stat-label">Open</div>
+                    <div class="market-stat-value">
+                        {_money(open_value)}
+                    </div>
+                </div>
+
+                <div class="market-stat">
+                    <div class="market-stat-label">High</div>
+                    <div class="market-stat-value">
+                        {_money(high_value)}
+                    </div>
+                </div>
+
+                <div class="market-stat">
+                    <div class="market-stat-label">Low</div>
+                    <div class="market-stat-value">
+                        {_money(low_value)}
+                    </div>
+                </div>
+
+                <div class="market-stat">
+                    <div class="market-stat-label">Volume</div>
+                    <div class="market-stat-value">
+                        {_compact_number(latest_volume)}
+                    </div>
+                </div>
+
+                <div class="market-stat">
+                    <div class="market-stat-label">
+                        Avg. Volume
+                    </div>
+                    <div class="market-stat-value">
+                        {_compact_number(average_volume)}
+                    </div>
+                </div>
+
+                <div class="market-stat">
+                    <div class="market-stat-label">
+                        Market Cap
+                    </div>
+                    <div class="market-stat-value">
+                        {market_cap_text}
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="market-footer">
+                📊 Market data from the configured market-data source
+                &nbsp; • &nbsp;
+                {selected_security}
+                ({selected_symbol})
+                &nbsp; • &nbsp;
+                Interactive chart — zoom, pan and hover for details
+            </div>
+            """
         )
 
     except Exception as chart_error:
@@ -1812,9 +2723,10 @@ else:
         )
 
 
-
 # ============================================================
+
 # 5. LIVE COLLATERAL STRESS TESTING
+
 # ============================================================
 
 st.subheader("📉 Collateral Stress Testing")
