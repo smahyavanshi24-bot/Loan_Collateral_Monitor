@@ -779,8 +779,65 @@ def get_nse_eod_price(
 
             return None
 
+                # ----------------------------------------------------
+        # OHLC PRICE COLUMNS
         # ----------------------------------------------------
-        # CLOSING PRICE
+        #
+        # NSE UDiFF Bhavcopy is the authoritative EOD source.
+        #
+        # We identify Open / High / Low / Close dynamically
+        # because NSE column names can vary between report
+        # formats.
+        # ----------------------------------------------------
+
+        def find_column(candidates):
+
+            for candidate in candidates:
+
+                if candidate in upper_columns:
+
+                    return upper_columns[
+                        candidate
+                    ]
+
+            return None
+
+
+        open_column = find_column(
+            (
+                "OPNPRIC",
+                "OPN_PRIC",
+                "OPEN",
+                "OPENPRICE",
+                "OPEN_PRICE",
+            )
+        )
+
+
+        high_column = find_column(
+            (
+                "HGHPRIC",
+                "HGH_PRIC",
+                "HIGH",
+                "HIGHPRICE",
+                "HIGH_PRICE",
+            )
+        )
+
+
+        low_column = find_column(
+            (
+                "LWPRIC",
+                "LW_PRIC",
+                "LOW",
+                "LOWPRICE",
+                "LOW_PRICE",
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # CLOSE
         # ----------------------------------------------------
 
         price_series = pd.to_numeric(
@@ -794,6 +851,7 @@ def get_nse_eod_price(
             ]
         )
 
+
         if price_series.empty:
 
             print(
@@ -803,20 +861,137 @@ def get_nse_eod_price(
 
             return None
 
+
         price = float(
             price_series.iloc[0]
         )
 
+
+        # ----------------------------------------------------
+        # OPEN
+        # ----------------------------------------------------
+
+        open_price = None
+
+        if open_column is not None:
+
+            series = pd.to_numeric(
+                matched[open_column],
+                errors="coerce"
+            ).dropna()
+
+            series = series[
+                series > 0
+            ]
+
+            if not series.empty:
+
+                open_price = float(
+                    series.iloc[0]
+                )
+
+
+        # ----------------------------------------------------
+        # HIGH
+        # ----------------------------------------------------
+
+        high_price = None
+
+        if high_column is not None:
+
+            series = pd.to_numeric(
+                matched[high_column],
+                errors="coerce"
+            ).dropna()
+
+            series = series[
+                series > 0
+            ]
+
+            if not series.empty:
+
+                high_price = float(
+                    series.iloc[0]
+                )
+
+
+        # ----------------------------------------------------
+        # LOW
+        # ----------------------------------------------------
+
+        low_price = None
+
+        if low_column is not None:
+
+            series = pd.to_numeric(
+                matched[low_column],
+                errors="coerce"
+            ).dropna()
+
+            series = series[
+                series > 0
+            ]
+
+            if not series.empty:
+
+                low_price = float(
+                    series.iloc[0]
+                )
+
+
+        # ----------------------------------------------------
+        # VALIDATE OHLC
+        # ----------------------------------------------------
+
+        if (
+            open_price is not None
+            and high_price is not None
+            and open_price > high_price
+
+        ):
+
+
+                print(
+                    "WARNING: NSE Open exceeds High."
+                )
+
+                open_price = None
+
+
+        if low_price is not None:
+
+            if high_price is not None \
+                    and low_price > high_price:
+
+                print(
+                    "WARNING: NSE Low exceeds High."
+                )
+
+                low_price = None
+
+
+        # ----------------------------------------------------
+        # PRINT AUTHORITATIVE NSE VALUES
+        # ----------------------------------------------------
+
         print(
-            "NSE OFFICIAL EOD PRICE: "
-            f"{nse_symbol or isin} = "
-            f"Rs.{price:.2f}"
+            "NSE OFFICIAL EOD OHLC: "
+            f"{nse_symbol or isin} | "
+            f"Open={open_price} | "
+            f"High={high_price} | "
+            f"Low={low_price} | "
+            f"Close={price}"
         )
 
         print(
             "NSE OFFICIAL TRADING DATE: "
             f"{selected_date.strftime('%d-%b-%Y')}"
         )
+
+
+        # ----------------------------------------------------
+        # RETURN
+        # ----------------------------------------------------
 
         return {
 
@@ -825,10 +1000,30 @@ def get_nse_eod_price(
                 2
             ),
 
+            "open": (
+                round(open_price, 2)
+                if open_price is not None
+                else None
+            ),
+
+            "high": (
+                round(high_price, 2)
+                if high_price is not None
+                else None
+            ),
+
+            "low": (
+                round(low_price, 2)
+                if low_price is not None
+                else None
+            ),
+
             "trading_date": (
                 selected_date
             ),
         }
+
+
 
     except Exception as e:
 
@@ -948,7 +1143,7 @@ def get_daily_market_data(
                 # can still return today's price even if Yahoo
                 # history is unavailable.
 
-                return {
+                                return {
                     "price": round(
                         nse_price,
                         2
@@ -958,9 +1153,13 @@ def get_daily_market_data(
                     "52_week_low": None,
                     "distance_from_52_week_low_%": None,
                     "last_updated": (
-                        today.strftime(
+                        pd.to_datetime(
+                            nse_trading_date
+                        ).strftime(
                             "%d-%b-%Y"
                         )
+                        if nse_trading_date is not None
+                        else "Unavailable"
                     ),
                     "source": (
                         "NSE Bhavcopy EOD"
@@ -1549,14 +1748,15 @@ def get_nse_live_market_data(
     """
     Fetch the current live market price directly from NSE.
 
-    This is the primary live source for NSE securities.
+    Primary live source for NSE securities.
 
-    Important:
-        - Uses NSE's official quote-equity endpoint.
-        - Supports normal equities and hybrid securities such
-          as REITs with series RR.
-        - Validates that NSE's lastUpdateTime belongs to today.
-        - NEVER returns previous-day data as a live price.
+    Safety rules:
+        - Uses NSE official quote-equity endpoint.
+        - Establishes a browser-like NSE session first.
+        - Retries the quote request if NSE temporarily rejects it.
+        - NEVER accepts previous-day data as today's live price.
+        - NEVER fabricates today's price when today's NSE data
+          is unavailable.
     """
 
     symbol = str(
@@ -1582,25 +1782,44 @@ def get_nse_live_market_data(
         f"?symbol={symbol}"
     )
 
+    # --------------------------------------------------------
+    # BROWSER-LIKE HEADERS
+    # --------------------------------------------------------
+
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/146.0.0.0 Safari/537.36"
+            "Chrome/151.0.0.0 Safari/537.36"
         ),
+
         "Accept": (
             "application/json, text/plain, */*"
         ),
+
         "Accept-Language": (
             "en-IN,en;q=0.9,en-US;q=0.8"
         ),
+
+        "Accept-Encoding": (
+            "gzip, deflate, br"
+        ),
+
         "Referer": (
             f"{base_url}/get-quotes/"
             f"equity?symbol={symbol}"
         ),
-        "X-Requested-With": (
-            "XMLHttpRequest"
+
+        "Origin": (
+            base_url
         ),
+
+        "Sec-Fetch-Dest": "empty",
+
+        "Sec-Fetch-Mode": "cors",
+
+        "Sec-Fetch-Site": "same-origin",
+
         "Connection": "keep-alive",
     }
 
@@ -1609,24 +1828,98 @@ def get_nse_live_market_data(
     try:
 
         # ----------------------------------------------------
-        # INITIAL NSE SESSION
+        # STEP 1 — INITIAL NSE WEBSITE SESSION
         # ----------------------------------------------------
 
-        session.get(
+        home_response = session.get(
             base_url,
             headers=headers,
-            timeout=15,
+            timeout=20,
         )
 
+        # We deliberately do not fail only because the
+        # homepage response is not 200.
+        #
+        # NSE may still provide the API after establishing
+        # cookies.
+
         # ----------------------------------------------------
-        # OFFICIAL NSE QUOTE
+        # STEP 2 — QUOTE PAGE
         # ----------------------------------------------------
 
-        response = session.get(
-            quote_url,
-            headers=headers,
-            timeout=15,
+        quote_page_url = (
+            f"{base_url}/get-quotes/"
+            f"equity?symbol={symbol}"
         )
+
+        try:
+
+            session.get(
+                quote_page_url,
+                headers=headers,
+                timeout=20,
+            )
+
+        except Exception:
+            pass
+
+        # ----------------------------------------------------
+        # STEP 3 — OFFICIAL NSE QUOTE
+        # ----------------------------------------------------
+
+        response = None
+
+        for attempt in range(1, 4):
+
+            try:
+
+                response = session.get(
+                    quote_url,
+                    headers=headers,
+                    timeout=20,
+                )
+
+                if response.status_code == 200:
+                    break
+
+                # NSE occasionally returns 403 when its
+                # anti-bot layer temporarily rejects a request.
+
+                if response.status_code == 403:
+
+                    if attempt < 3:
+
+                        import time as _time
+
+                        _time.sleep(
+                            1.5 * attempt
+                        )
+
+                        continue
+
+                response.raise_for_status()
+
+            except Exception as e:
+
+                if attempt >= 3:
+
+                    raise Exception(
+                        f"NSE live quote request failed "
+                        f"for {symbol}: {e}"
+                    ) from e
+
+                import time as _time
+
+                _time.sleep(
+                    1.5 * attempt
+                )
+
+        if response is None:
+
+            raise Exception(
+                f"NSE returned no response "
+                f"for {symbol}."
+            )
 
         response.raise_for_status()
 
@@ -1643,10 +1936,14 @@ def get_nse_live_market_data(
     # VALIDATE RESPONSE
     # --------------------------------------------------------
 
-    if not isinstance(data, dict):
+    if not isinstance(
+        data,
+        dict,
+    ):
 
         raise Exception(
-            f"Invalid NSE response for {symbol}."
+            f"Invalid NSE response "
+            f"for {symbol}."
         )
 
     price_info = data.get(
@@ -1678,7 +1975,10 @@ def get_nse_live_market_data(
         errors="coerce",
     )
 
-    if pd.isna(live_price) or live_price <= 0:
+    if (
+        pd.isna(live_price)
+        or live_price <= 0
+    ):
 
         raise Exception(
             f"NSE returned no valid live price "
@@ -1738,17 +2038,12 @@ def get_nse_live_market_data(
             f"{display_name}."
         )
 
-    # NSE normally returns:
-    # 20-Aug-2026 13:23:00
-
     try:
 
-        last_timestamp = (
-            pd.to_datetime(
-                last_update_text,
-                format="%d-%b-%Y %H:%M:%S",
-                errors="raise",
-            )
+        last_timestamp = pd.to_datetime(
+            last_update_text,
+            format="%d-%b-%Y %H:%M:%S",
+            errors="raise",
         )
 
     except Exception as e:
@@ -1769,7 +2064,7 @@ def get_nse_live_market_data(
     )
 
     # --------------------------------------------------------
-    # CRITICAL STALE-DATA PROTECTION
+    # STALE-DATA PROTECTION
     # --------------------------------------------------------
 
     now_ist = datetime.now(
@@ -1788,7 +2083,9 @@ def get_nse_live_market_data(
             f"IST."
         )
 
-    # NSE should never report a future timestamp.
+    # --------------------------------------------------------
+    # FUTURE TIMESTAMP PROTECTION
+    # --------------------------------------------------------
 
     if (
         last_timestamp
@@ -1880,8 +2177,7 @@ def get_nse_live_market_data(
         ),
 
         "last_updated": (
-            last_timestamp
-            .strftime(
+            last_timestamp.strftime(
                 "%d-%b-%Y %H:%M:%S"
             )
         ),
@@ -1899,29 +2195,29 @@ def get_nse_live_market_data(
         f"₹{live_price:.2f}"
     )
 
-    print(
-        f"NSE LIVE timestamp: "
-        f"{last_timestamp.strftime('%d-%b-%Y %H:%M:%S')} IST"
-    )
-
     return result
 
 def get_live_stock_data(stock_name):
     """
     Main function used by the live dashboard.
 
-    Behaviour:
+    Live-data priority:
 
-        During market hours:
-            Intraday price.
+        1. Official NSE live quote
+        2. Yahoo Finance intraday data
+        3. Today's verified NSE EOD close
 
-        Outside market hours:
-            Latest daily closing price.
+    IMPORTANT:
 
-        If intraday fails during market hours:
-            DO NOT fall back to a previous-day price.
-            Raise an error so the dashboard shows that the
-            live price is unavailable.
+        - During market hours, previous-day data is NEVER used.
+        - After market close, today's intraday data is still
+          preferred because it contains the actual final
+          trading-session price.
+        - A previous trading day's EOD price is NEVER presented
+          as today's live collateral price.
+        - If today's market price cannot be verified, the
+          function raises an error rather than silently using
+          stale data.
 
     Historical database is NOT modified.
     """
@@ -1934,11 +2230,15 @@ def get_live_stock_data(stock_name):
         "yahoo_symbol"
     ]
 
+    nse_symbol = resolved[
+        "nse_symbol"
+    ]
 
     now = datetime.now(
         IST
     )
 
+    today = now.date()
 
     print()
     print(
@@ -1946,7 +2246,7 @@ def get_live_stock_data(stock_name):
     )
 
     print(
-        f"MARKET DATA REQUEST"
+        "MARKET DATA REQUEST"
     )
 
     print(
@@ -1954,13 +2254,11 @@ def get_live_stock_data(stock_name):
     )
 
     print(
-        f"NSE Symbol  : "
-        f"{resolved['nse_symbol']}"
+        f"NSE Symbol  : {nse_symbol}"
     )
 
     print(
-        f"Yahoo       : "
-        f"{yahoo_symbol}"
+        f"Yahoo       : {yahoo_symbol}"
     )
 
     print(
@@ -1982,102 +2280,288 @@ def get_live_stock_data(stock_name):
         "=" * 60
     )
 
-
-        # ========================================================
-    # MARKET OPEN
     # ========================================================
-
-    if is_market_open(now):
-
-        # ========================================================
-        # PRIMARY SOURCE — OFFICIAL NSE LIVE QUOTE
-        # ========================================================
-
-        try:
-
-            return get_nse_live_market_data(
-                resolved["nse_symbol"],
-                stock_display_name=stock_name,
-            )
-
-        except Exception as nse_error:
-
-            print(
-                f"NSE live data unavailable "
-                f"for {stock_name}"
-            )
-
-            print(
-                f"Reason: {nse_error}"
-            )
-
-
-        # ========================================================
-        # SECONDARY SOURCE — YAHOO INTRADAY
-        # ========================================================
-
-        try:
-
-            return get_intraday_market_data(
-                yahoo_symbol,
-                stock_display_name=stock_name,
-            )
-
-        except Exception as intraday_error:
-
-            print(
-                f"Yahoo live intraday data unavailable "
-                f"for {stock_name}"
-            )
-
-            print(
-                f"Reason: {intraday_error}"
-            )
-
-            # ----------------------------------------------------
-            # IMPORTANT:
-            # NEVER use yesterday's close during market hours.
-            # ----------------------------------------------------
-
-            raise Exception(
-                f"Live market price unavailable "
-                f"for {stock_name}. "
-                f"Both NSE and Yahoo live sources failed. "
-                f"No previous-day price will be used during "
-                f"market hours."
-            ) from intraday_error
-
-
-    # ========================================================
-    # MARKET CLOSED
-    # ========================================================
-
-    else:
-
-        print(
-            "Indian market is currently closed."
-        )
-
-        print(
-            "Using latest completed daily close."
-        )
-
-
-    # ========================================================
-    # DAILY FALLBACK
+    # 1. OFFICIAL NSE LIVE QUOTE
     # ========================================================
 
     try:
 
-        return get_daily_market_data(
+        print(
+            f"Trying NSE live quote for "
+            f"{stock_name}..."
+        )
+
+        return get_nse_live_market_data(
+            nse_symbol,
+            stock_display_name=stock_name,
+        )
+
+    except Exception as nse_error:
+
+        print(
+            f"NSE live data unavailable "
+            f"for {stock_name}"
+        )
+
+        print(
+            f"Reason: {nse_error}"
+        )
+
+    # ========================================================
+    # 2. YAHOO INTRADAY
+    #
+    # IMPORTANT:
+    #
+    # Try this EVEN AFTER 3:30 PM.
+    #
+    # Yahoo can still provide today's completed
+    # intraday trading session after the market closes.
+    # ========================================================
+
+    try:
+
+        print(
+            f"Trying Yahoo intraday data for "
+            f"{stock_name}..."
+        )
+
+        intraday_data = get_intraday_market_data(
+            yahoo_symbol,
+            stock_display_name=stock_name,
+        )
+
+        if not intraday_data:
+
+            raise Exception(
+                "Yahoo returned empty intraday data."
+            )
+
+        intraday_price = intraday_data.get(
+            "price"
+        )
+
+        intraday_timestamp = intraday_data.get(
+            "last_updated"
+        )
+
+        if (
+            intraday_price is None
+            or intraday_price <= 0
+        ):
+
+            raise Exception(
+                "Yahoo returned an invalid intraday price."
+            )
+
+        # ----------------------------------------------------
+        # VALIDATE DATE
+        # ----------------------------------------------------
+        #
+        # We must make sure Yahoo's price belongs to TODAY.
+        #
+        # Otherwise yesterday's intraday price must not be
+        # presented as today's live collateral value.
+        # ----------------------------------------------------
+
+        intraday_date = None
+
+        if intraday_timestamp:
+
+            try:
+
+                parsed_timestamp = pd.to_datetime(
+                    intraday_timestamp,
+                    errors="coerce"
+                )
+
+                if pd.notna(
+                    parsed_timestamp
+                ):
+
+                    if (
+                        parsed_timestamp.tzinfo
+                        is None
+                    ):
+
+                        parsed_timestamp = (
+                            parsed_timestamp.tz_localize(
+                                IST
+                            )
+                        )
+
+                    else:
+
+                        parsed_timestamp = (
+                            parsed_timestamp.tz_convert(
+                                IST
+                            )
+                        )
+
+                    intraday_date = (
+                        parsed_timestamp.date()
+                    )
+
+            except Exception:
+
+                intraday_date = None
+
+        # ----------------------------------------------------
+        # TODAY'S INTRADAY DATA
+        # ----------------------------------------------------
+
+        if intraday_date == today:
+
+            print(
+                f"TODAY'S INTRADAY DATA ACCEPTED: "
+                f"{stock_name} = "
+                f"₹{float(intraday_price):.2f}"
+            )
+
+            print(
+                f"Intraday timestamp: "
+                f"{intraday_timestamp}"
+            )
+
+            return intraday_data
+
+        # ----------------------------------------------------
+        # STALE INTRADAY DATA
+        # ----------------------------------------------------
+
+        raise Exception(
+            f"Yahoo intraday data is stale. "
+            f"Received date={intraday_date}, "
+            f"today={today}."
+        )
+
+    except Exception as intraday_error:
+
+        print(
+            f"Yahoo intraday data unavailable "
+            f"for {stock_name}"
+        )
+
+        print(
+            f"Reason: {intraday_error}"
+        )
+
+    # ========================================================
+    # 3. DAILY NSE EOD
+    #
+    # This is allowed ONLY when the returned EOD date
+    # represents a valid completed trading date.
+    #
+    # On a normal weekday after market close, if NSE has
+    # only yesterday's Bhavcopy, DO NOT use it as today's
+    # live collateral price.
+    # ========================================================
+
+    try:
+
+        print(
+            f"Trying NSE daily EOD data for "
+            f"{stock_name}..."
+        )
+
+        daily_data = get_daily_market_data(
             yahoo_symbol,
             stock_display_name=stock_name
+        )
+
+        if not daily_data:
+
+            raise Exception(
+                "Daily market data unavailable."
+            )
+
+        daily_price = daily_data.get(
+            "price"
+        )
+
+        daily_date_text = daily_data.get(
+            "last_updated"
+        )
+
+        if (
+            daily_price is None
+            or daily_price <= 0
+        ):
+
+            raise Exception(
+                "Daily market data returned "
+                "an invalid price."
+            )
+
+        daily_date = None
+
+        if daily_date_text:
+
+            try:
+
+                parsed_daily_date = pd.to_datetime(
+                    daily_date_text,
+                    errors="coerce"
+                )
+
+                if pd.notna(
+                    parsed_daily_date
+                ):
+
+                    daily_date = (
+                        parsed_daily_date.date()
+                    )
+
+            except Exception:
+
+                daily_date = None
+
+        # ----------------------------------------------------
+        # TODAY'S EOD
+        # ----------------------------------------------------
+
+        if daily_date == today:
+
+            print(
+                f"TODAY'S NSE EOD DATA ACCEPTED: "
+                f"{stock_name} = "
+                f"₹{float(daily_price):.2f}"
+            )
+
+            return daily_data
+
+        # ----------------------------------------------------
+        # PREVIOUS-DAY EOD
+        # ----------------------------------------------------
+        #
+        # If today is Saturday/Sunday, the latest completed
+        # trading day is legitimately the previous weekday.
+        #
+        # Otherwise, during a normal weekday, do not silently
+        # call yesterday's price today's live collateral price.
+        # ----------------------------------------------------
+
+        if today.weekday() >= 5:
+
+            print(
+                f"Market is closed for weekend. "
+                f"Using latest completed EOD: "
+                f"{daily_date_text}"
+            )
+
+            return daily_data
+
+        raise Exception(
+            f"Daily EOD data is stale. "
+            f"Received date={daily_date}, "
+            f"today={today}. "
+            f"Previous-day price will NOT be "
+            f"used as today's live collateral."
         )
 
     except Exception as daily_error:
 
         print(
-            f"❌ Market data unavailable "
+            f"Daily market data unavailable "
             f"for {stock_name}"
         )
 
@@ -2085,10 +2569,20 @@ def get_live_stock_data(stock_name):
             f"Reason: {daily_error}"
         )
 
+        # ====================================================
+        # FINAL RESULT
+        # ====================================================
+        #
+        # DO NOT return stale data.
+        # Let dashboard.py mark the security as unavailable.
+        # ====================================================
+
         raise Exception(
-            f"Valid market data unavailable "
-            f"for {stock_name}"
+            f"Valid current market data unavailable "
+            f"for {stock_name}. "
+            f"No stale previous-day price will be used."
         ) from daily_error
+
 
 # ============================================================
 # GET STOCK PRICE
@@ -2298,17 +2792,21 @@ def get_market_chart_data(
     stock_display_name=None
 ):
     """
-    Return historical market data for the dashboard chart.
+    Return clean historical market data for dashboard charts.
 
     Supported periods:
-        1D = 1-minute
-        1W = 15-minute
-        1M = 1-hour
-        1Y = daily
-        5Y = daily
+        1D = intraday 1-minute data
+        1W = daily trading-session data
+        1M = daily trading-session data
+        1Y = daily trading-session data
+        5Y = daily trading-session data
 
-    This function is READ-ONLY.
+    The function is READ-ONLY.
     It does not modify the collateral database.
+
+    IMPORTANT:
+    Missing market observations are NOT forward-filled.
+    This prevents artificial horizontal price lines.
     """
 
     display_name = (
@@ -2316,28 +2814,38 @@ def get_market_chart_data(
         or yahoo_symbol
     )
 
+    # ========================================================
+    # PERIOD SETTINGS
+    # ========================================================
+
     period_settings = {
 
+        # Current trading day
         "1D": {
             "period": "1d",
             "interval": "1m",
         },
 
+        # One trading week
+        # Use daily OHLC rather than 15-minute data.
         "1W": {
             "period": "5d",
-            "interval": "15m",
+            "interval": "1d",
         },
 
+        # One month
         "1M": {
             "period": "1mo",
-            "interval": "1h",
+            "interval": "1d",
         },
 
+        # One year
         "1Y": {
             "period": "1y",
             "interval": "1d",
         },
 
+        # Five years
         "5Y": {
             "period": "5y",
             "interval": "1d",
@@ -2354,34 +2862,224 @@ def get_market_chart_data(
         period
     ]
 
+        # ========================================================
+    # DOWNLOAD MARKET DATA
+    # ========================================================
+
     try:
 
-        stock = yf.Ticker(
-            yahoo_symbol
-        )
+                # ----------------------------------------------------
+        # 1D — INTRADAY
+        # ----------------------------------------------------
+        #
+        # Primary source:
+        #     Yahoo Finance genuine 1-minute data.
+        #
+        # If Yahoo provides no intraday data:
+        #     Use the official NSE EOD OHLC as ONE
+        #     completed-session observation.
+        #
+        # IMPORTANT:
+        #     We do NOT manufacture minute candles.
+        # ----------------------------------------------------
 
-        data = stock.history(
-            period=settings["period"],
-            interval=settings["interval"],
-            auto_adjust=False,
-            prepost=False
-        )
+        if period == "1D":
 
-        if (
-            data is None
-            or data.empty
-        ):
-
-            raise Exception(
-                f"No market history received "
-                f"for {display_name}"
+            stock = yf.Ticker(
+                yahoo_symbol
             )
+
+            data = stock.history(
+                period="1d",
+                interval="1m",
+                auto_adjust=False,
+                prepost=False
+            )
+
+            # ------------------------------------------------
+            # YAHOO INTRADAY AVAILABLE
+            # ------------------------------------------------
+
+            if (
+                data is not None
+                and not data.empty
+            ):
+
+                print(
+                    f"Yahoo intraday data received "
+                    f"for {display_name}: "
+                    f"{len(data)} observations"
+                )
+
+            # ------------------------------------------------
+            # YAHOO INTRADAY UNAVAILABLE
+            # ------------------------------------------------
+            #
+            # This is currently what happens with Mindspace.
+            #
+            # Do NOT create artificial minute candles.
+            # Use one official NSE completed-session row.
+            # ------------------------------------------------
+
+            else:
+
+                print(
+                    f"Yahoo intraday unavailable "
+                    f"for {display_name}."
+                )
+
+                print(
+                    "Using official NSE EOD OHLC "
+                    "as completed-session data."
+                )
+
+                resolved = resolve_security(
+                    display_name
+                )
+
+                nse_eod = get_nse_eod_price(
+                    nse_symbol=resolved.get(
+                        "nse_symbol"
+                    ),
+                    isin=resolved.get(
+                        "isin"
+                    ),
+                    trading_date=datetime.now(
+                        IST
+                    ).date()
+                )
+
+                if nse_eod is None:
+
+                    raise Exception(
+                        f"No intraday data received "
+                        f"for {display_name} and "
+                        f"NSE EOD data is unavailable."
+                    )
+
+                session_date = pd.Timestamp(
+                    nse_eod[
+                        "trading_date"
+                    ]
+                )
+
+                data = pd.DataFrame(
+                    [
+                        {
+                            "Datetime": session_date,
+                            "Open": nse_eod.get(
+                                "open"
+                            ),
+                            "High": nse_eod.get(
+                                "high"
+                            ),
+                            "Low": nse_eod.get(
+                                "low"
+                            ),
+                            "Close": nse_eod.get(
+                                "price"
+                            ),
+                            "Volume": None,
+                        }
+                    ]
+                )
+
+                print(
+                    f"Official NSE EOD fallback "
+                    f"created for {display_name}: "
+                    f"Open={nse_eod.get('open')}, "
+                    f"High={nse_eod.get('high')}, "
+                    f"Low={nse_eod.get('low')}, "
+                    f"Close={nse_eod.get('price')}"
+                )
+
+        # ----------------------------------------------------
+        # DAILY PERIODS
+        # ----------------------------------------------------
+
+        else:
+
+            stock = yf.Ticker(
+                yahoo_symbol
+            )
+
+            data = stock.history(
+                period=settings["period"],
+                interval="1d",
+                auto_adjust=False,
+                prepost=False
+            )
+
+
+            # ------------------------------------------------
+            # If Yahoo has no history, use NSE EOD.
+            # ------------------------------------------------
+
+            if (
+                data is None
+                or data.empty
+            ):
+
+                resolved = resolve_security(
+                    display_name
+                )
+
+                nse_eod = get_nse_eod_price(
+                    nse_symbol=resolved.get(
+                        "nse_symbol"
+                    ),
+                    isin=resolved.get(
+                        "isin"
+                    ),
+                    trading_date=datetime.now(
+                        IST
+                    ).date()
+                )
+
+
+                if nse_eod is None:
+
+                    raise Exception(
+                        f"No market history received "
+                        f"for {display_name}"
+                    )
+
+
+                data = pd.DataFrame(
+                    [
+                        {
+                            "Datetime": pd.Timestamp(
+                                nse_eod[
+                                    "trading_date"
+                                ]
+                            ),
+                            "Open": nse_eod.get(
+                                "open"
+                            ),
+                            "High": nse_eod.get(
+                                "high"
+                            ),
+                            "Low": nse_eod.get(
+                                "low"
+                            ),
+                            "Close": nse_eod.get(
+                                "price"
+                            ),
+                            "Volume": None,
+                        }
+                    ]
+                )
+
+    
+        # ====================================================
+        # RESET INDEX
+        # ====================================================
 
         data = data.reset_index()
 
-        # ----------------------------------------------------
-        # TIMESTAMP COLUMN
-        # ----------------------------------------------------
+        # ====================================================
+        # FIND TIMESTAMP COLUMN
+        # ====================================================
 
         timestamp_column = None
 
@@ -2393,6 +3091,7 @@ def get_market_chart_data(
             if column in data.columns:
 
                 timestamp_column = column
+
                 break
 
         if timestamp_column is None:
@@ -2402,22 +3101,31 @@ def get_market_chart_data(
                 f"for {display_name}"
             )
 
-        # ----------------------------------------------------
-        # REQUIRED COLUMNS
-        # ----------------------------------------------------
+        # ====================================================
+        # REQUIRED MARKET COLUMNS
+        # ====================================================
 
         required_columns = [
+
             timestamp_column,
+
             "Open",
+
             "High",
+
             "Low",
+
             "Close",
+
             "Volume",
         ]
 
         missing_columns = [
+
             column
+
             for column in required_columns
+
             if column not in data.columns
         ]
 
@@ -2429,12 +3137,21 @@ def get_market_chart_data(
                 f"{missing_columns}"
             )
 
+        # ====================================================
+        # SELECT REQUIRED DATA
+        # ====================================================
+
         result = data[
             required_columns
         ].copy()
 
+        # ====================================================
+        # STANDARDIZE COLUMN NAMES
+        # ====================================================
+
         result = result.rename(
             columns={
+
                 timestamp_column:
                     "datetime",
 
@@ -2455,21 +3172,31 @@ def get_market_chart_data(
             }
         )
 
-        # ----------------------------------------------------
-        # CLEAN NUMERIC DATA
-        # ----------------------------------------------------
+        # ====================================================
+        # TIMESTAMP CLEANING
+        # ====================================================
 
         result["datetime"] = pd.to_datetime(
             result["datetime"],
             errors="coerce"
         )
 
+        # ====================================================
+        # NUMERIC CLEANING
+        # ====================================================
+
         for column in [
+
             "open",
+
             "high",
+
             "low",
+
             "close",
+
             "volume",
+
         ]:
 
             result[column] = pd.to_numeric(
@@ -2477,29 +3204,112 @@ def get_market_chart_data(
                 errors="coerce"
             )
 
+        # ====================================================
+        # REMOVE INVALID ROWS
+        # ====================================================
+
         result = result.dropna(
             subset=[
+
                 "datetime",
+
                 "open",
+
                 "high",
+
                 "low",
+
                 "close",
             ]
         )
+
+        # ====================================================
+        # REMOVE INVALID PRICES
+        # ====================================================
 
         result = result[
             result["close"] > 0
         ]
 
-        result = result.sort_values(
-            "datetime"
-        )
+        result = result[
+            result["open"] > 0
+        ]
+
+        result = result[
+            result["high"] > 0
+        ]
+
+        result = result[
+            result["low"] > 0
+        ]
+
+        # ====================================================
+        # REMOVE DUPLICATE TIMESTAMPS
+        # ====================================================
 
         result = result.drop_duplicates(
             subset=[
                 "datetime"
-            ]
+            ],
+            keep="last"
         )
+
+        # ====================================================
+        # SORT CHRONOLOGICALLY
+        # ====================================================
+
+        result = result.sort_values(
+            "datetime"
+        )
+
+        # ====================================================
+        # DO NOT FORWARD-FILL PRICES
+        # ====================================================
+
+        # IMPORTANT:
+        #
+        # We intentionally do NOT do:
+        #
+        # result.ffill()
+        #
+        # or:
+        #
+        # result["close"].fillna(...)
+        #
+        # because that would create artificial horizontal
+        # price movements when market data is missing.
+
+        # ====================================================
+        # 1D CLEANING
+        # ====================================================
+
+        if period == "1D":
+
+            # Keep only valid intraday observations.
+
+            result = result[
+                result["datetime"].notna()
+            ]
+
+        # ====================================================
+        # DAILY PERIOD CLEANING
+        # ====================================================
+
+        else:
+
+            # Keep only actual market observations.
+            #
+            # No weekends.
+            # No artificial dates.
+            # No interpolation.
+
+            result = result[
+                result["datetime"].notna()
+            ]
+
+        # ====================================================
+        # FINAL EMPTY CHECK
+        # ====================================================
 
         if result.empty:
 
@@ -2508,9 +3318,15 @@ def get_market_chart_data(
                 f"available for {display_name}"
             )
 
-        return result.reset_index(
+        # ====================================================
+        # FINAL RESET
+        # ====================================================
+
+        result = result.reset_index(
             drop=True
         )
+
+        return result
 
     except Exception as e:
 
